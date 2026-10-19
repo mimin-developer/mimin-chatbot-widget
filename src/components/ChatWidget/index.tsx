@@ -17,6 +17,7 @@ import { OpenAiAgentVoiceLayout } from "../CallWindow/openai-agent-voice";
 import { ElevenLabsAgentVoiceLayout } from "../CallWindow/elevenlabs-agent-voice";
 import { io, Socket } from "socket.io-client";
 import { ENV } from "../../config/environment";
+import { clearCustomerToken, getCustomerToken, isUnauthorized } from "../../utils/session";
 
 interface ChatWidgetProps {
   config?: ChatbotConfig;
@@ -79,6 +80,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   const [isCallVisible, setIsCallVisible] = useState(false);
   const [shouldRenderChat, setShouldRenderChat] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [isFirstTime, setIsFirstTime] = useState(true);
   const [sessionActive, setSessionActive] = useState(true);
 
@@ -261,7 +263,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       let response: Response;
 
       if (isWebsite) {
-        const token = localStorage.getItem(`mimin-token-${config?.credentials?.username}`);
+        const token = getCustomerToken(config?.credentials?.username);
         const name = phoneOrIP.name || phoneOrIP.value;
 
         // Kirim base64 asli ke backend (bukan blob URL)
@@ -334,6 +336,27 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       }
 
       if (!response.ok) {
+        if (
+          isUnauthorized(response.status) &&
+          isWebsite &&
+          config?.theme?.chatWindow?.enableLogin
+        ) {
+          const username = config?.credentials?.username;
+          console.error(
+            `Session expired: got 401 while sending message for user "${username}"`
+          );
+          if (username) {
+            clearCustomerToken(username);
+          }
+          blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+          blobUrlsRef.current = [];
+          setInteractions([]);
+          setCurrentResponseMsg("");
+          setSessionExpired(true);
+          setIsAuthenticated(false);
+          return;
+        }
+
         if (optimisticId) {
           updateInteractionByMessageId(optimisticId, { isError: true });
         }
@@ -571,7 +594,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       let phoneOrIPState: { name: string, value: string } | null = null;
 
       if (config.theme?.chatWindow.enableLogin) {
-        const token = localStorage.getItem(`mimin-token-${config.credentials?.username}`);
+        const token = getCustomerToken(config.credentials?.username);
 
         if (token) {
           try {
@@ -584,15 +607,21 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             });
 
             if (!res.ok) {
-              if (res.status === 401) localStorage.removeItem(`mimin-token-${config.credentials?.username}`);
-              else throw Error('Failed to get customer data');
-            } else {
-              const data = await res.json();
-              phoneOrIPState = { name: data.data.name, value: data.data.phone };
-              setIsAuthenticated(true);
+              if (isUnauthorized(res.status)) {
+                clearCustomerToken(config.credentials?.username);
+              }
+              throw new Error(`Failed to get customer data (status ${res.status})`);
             }
-          } catch {
-            throw Error('Failed to get customer data');
+
+            const data = await res.json();
+            phoneOrIPState = { name: data.data.name, value: data.data.phone };
+            setIsAuthenticated(true);
+          } catch (error) {
+            console.error(
+              `Failed to get customer data for user "${config.credentials?.username}":`,
+              error
+            );
+            throw error;
           }
         }
       } else {
@@ -610,7 +639,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         }
       }
       setPhoneOrIP(phoneOrIPState);
-    })();
+    })().catch((error) => {
+      console.error("ChatWidget initialization failed:", error);
+    });
   }, [config]);
 
   useEffect(() => {
@@ -693,9 +724,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
                 !isFirstTime && (
                   <AuthWindow
                     onSuccessLogin={(token, phone) => {
+                      setSessionExpired(false);
                       setPhoneOrIP({ name: phone.phone, value: phone.value });
                       setIsAuthenticated(!!token);
                     }}
+                    sessionExpired={sessionExpired}
                     token={""}
                   />
                 )}
