@@ -22,11 +22,11 @@ export const ElevenLabsAudioVisualizer: React.FC<ElevenLabsAudioVisualizerProps>
   if (!isActive || !frequencyData) {
     return (
       <div
-        className="mimin-flex mimin-items-center mimin-justify-center"
+        className="mimin:flex mimin:items-center mimin:justify-center"
         style={{ width: size, height: size }}
       >
-        <div className="mimin-flex mimin-items-center mimin-justify-center mimin-animate-pulse">
-          <span className="mimin-text-white mimin-text-sm">Idle...</span>
+        <div className="mimin:flex mimin:items-center mimin:justify-center mimin:animate-pulse">
+          <span className="mimin:text-white mimin:text-sm">Idle...</span>
         </div>
       </div>
     );
@@ -63,14 +63,14 @@ export const ElevenLabsAudioVisualizer: React.FC<ElevenLabsAudioVisualizerProps>
 
   return (
     <div
-      className="mimin-flex mimin-items-center mimin-justify-center"
+      className="mimin:flex mimin:items-center mimin:justify-center"
       style={{ width: size, height: size }}
     >
-      <div className="mimin-flex mimin-items-end mimin-justify-center mimin-space-x-1">
+      <div className="mimin:flex mimin:items-end mimin:justify-center mimin:space-x-1">
         {bars.map((value, index) => (
           <motion.div
             key={index}
-            className="mimin-rounded-full mimin-bg-current"
+            className="mimin:rounded-full mimin:bg-current"
             style={{
               width: Math.max(2, size / 16),
               minHeight: Math.max(2, size / 16),

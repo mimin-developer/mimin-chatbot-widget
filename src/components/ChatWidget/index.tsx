@@ -660,10 +660,10 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="mimin-fixed mimin-bottom-6 mimin-right-6 mimin-z-[9999]">
+      <div className="mimin:fixed mimin:bottom-6 mimin:right-6 mimin:z-[9999]">
         <button
           id="mimin-widget-btn-trigger"
-          className="mimin-relative mimin-flex mimin-items-center mimin-gap-2.5 mimin-px-4 mimin-py-2 mimin-rounded-full mimin-border mimin-border-[#0096a2] mimin-shadow-md mimin-transition-all mimin-duration-300 mimin-ease-in-out mimin-cursor-pointer"
+          className="mimin:relative mimin:flex mimin:items-center mimin:gap-2.5 mimin:px-4 mimin:py-2 mimin:rounded-full mimin:border mimin:border-[#0096a2] mimin:shadow-md mimin:transition-all mimin:duration-300 mimin:ease-in-out mimin:cursor-pointer"
           style={{
             backgroundColor: backgroundButtonColor,
             color: textButtonColor,
@@ -678,9 +678,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
               target.src = "/icons/favicon.ico";
             }}
             alt=" "
-            className="mimin-w-4 mimin-h-auto"
+            className="mimin:w-4 mimin:h-auto"
           />
-          <span className="mimin-text-sm mimin-font-bold">
+          <span className="mimin:text-sm mimin:font-bold">
             {config?.theme?.button?.tooltip || "Ask Mimin"}
           </span>
 
@@ -691,7 +691,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.8, y: -10 }}
               transition={{ duration: 0.25, ease: "easeOut" }}
-              className="mimin-absolute -mimin-top-3 mimin-right-0 mimin-text-white mimin-px-1.5 mimin-py-0.5 mimin-text-[10px] mimin-rounded-full mimin-bg-red-500 mimin-animate-pulse"
+              className="mimin:absolute -mimin:top-3 mimin:right-0 mimin:text-white mimin:px-1.5 mimin:py-0.5 mimin:text-[10px] mimin:rounded-full mimin:bg-red-500 mimin:animate-pulse"
             >
               In Call
             </motion.div>
@@ -701,7 +701,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         {shouldRenderChat && (
           <motion.div
             id="mimin-widget-main"
-            className="mimin-absolute mimin-bottom-full mimin-mb-4 mimin-right-0"
+            className="mimin:absolute mimin:bottom-full mimin:mb-4 mimin:right-0"
             initial={{ opacity: 0, y: 20 }}
             animate={isChatVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
@@ -712,7 +712,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             }}
           >
             <div
-              className="mimin-relative mimin-flex mimin-flex-col mimin-border mimin-border-gray-200 mimin-rounded-xl mimin-shadow-lg mimin-overflow-hidden"
+              className="mimin:relative mimin:flex mimin:flex-col mimin:border mimin:border-gray-200 mimin:rounded-xl mimin:shadow-lg mimin:overflow-hidden"
               style={{
                 width: config?.theme?.chatWindow?.width || "330px",
                 height: config?.theme?.chatWindow?.height || "600px",

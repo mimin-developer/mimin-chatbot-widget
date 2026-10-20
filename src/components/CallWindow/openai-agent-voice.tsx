@@ -286,18 +286,18 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
   return (
     <motion.div
-      className="mimin-absolute mimin-inset-0 mimin-bg-white mimin-z-10"
+      className="mimin:absolute mimin:inset-0 mimin:bg-white mimin:z-10"
       initial="hidden"
       animate="visible"
       exit="exit"
       // @ts-ignore
       variants={containerVariants}
     >
-      <div className="mimin-h-full mimin-px-6 mimin-py-10 mimin-overflow-y-auto">
-        <div className="mimin-flex mimin-flex-col mimin-items-center mimin-justify-center">
+      <div className="mimin:h-full mimin:px-6 mimin:py-10 mimin:overflow-y-auto">
+        <div className="mimin:flex mimin:flex-col mimin:items-center mimin:justify-center">
           {/* Header dengan animasi berkedip */}
           <motion.h4
-            className="mimin-text-[#0096a2] mimin-text-xl mimin-font-bold mimin-mb-6"
+            className="mimin:text-[#0096a2] mimin:text-xl mimin:font-bold mimin:mb-6"
             variants={blinkingTextVariants}
             initial="initial"
             animate="animate"
@@ -306,16 +306,16 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
           </motion.h4>
 
           {/* Lingkaran audio dengan animasi berlapis */}
-          <div className="mimin-relative">
+          <div className="mimin:relative">
             <motion.div
-              className="mimin-flex mimin-items-center mimin-justify-center mimin-p-4 mimin-rounded-full mimin-w-[204px] mimin-h-[204px] mimin-bg-gradient-to-br mimin-from-[#0096a2]/30 mimin-to-[#f26075]/30"
+              className="mimin:flex mimin:items-center mimin:justify-center mimin:p-4 mimin:rounded-full mimin:w-[204px] mimin:h-[204px] mimin:bg-gradient-to-br mimin:from-[#0096a2]/30 mimin:to-[#f26075]/30"
               // @ts-ignore
               variants={audioCircleVariants}
               initial="initial"
               animate="animate"
             >
               <motion.div
-                className="mimin-flex mimin-items-center mimin-justify-center mimin-p-4 mimin-rounded-full mimin-w-full mimin-h-full mimin-bg-gradient-to-br mimin-from-[#0096a2]/40 mimin-to-[#f26075]/40"
+                className="mimin:flex mimin:items-center mimin:justify-center mimin:p-4 mimin:rounded-full mimin:w-full mimin:h-full mimin:bg-gradient-to-br mimin:from-[#0096a2]/40 mimin:to-[#f26075]/40"
                 animate={{
                   scale: [1, 1.02, 1],
                   transition: {
@@ -328,7 +328,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
                 }}
               >
                 <motion.div
-                  className="mimin-flex mimin-items-center mimin-justify-center mimin-p-4 mimin-rounded-full mimin-w-full mimin-h-full mimin-bg-gradient-to-br mimin-from-[#0096a2]/50 mimin-to-[#f26075]/50"
+                  className="mimin:flex mimin:items-center mimin:justify-center mimin:p-4 mimin:rounded-full mimin:w-full mimin:h-full mimin:bg-gradient-to-br mimin:from-[#0096a2]/50 mimin:to-[#f26075]/50"
                   animate={{
                     scale: [1, 1.03, 1],
                     transition: {
@@ -342,14 +342,14 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
                 />
               </motion.div>
             </motion.div>
-            <div className="mimin-absolute mimin-inset-0 mimin-flex mimin-justify-center mimin-items-center">
+            <div className="mimin:absolute mimin:inset-0 mimin:flex mimin:justify-center mimin:items-center">
               <OpenAIAudioVisualizer
                 audioStream={aiMediaStream}
                 isActive={isVisible}
               />
             </div>
             {!!aiMediaStream && (
-              <div className="mimin-absolute mimin-text-white mimin-text-xs mimin-capitalize mimin-tracking-wide mimin-bottom-[25%] mimin-left-[50%] -mimin-translate-x-[50%] mimin-mt-4 mimin-animate-pulse">
+              <div className="mimin:absolute mimin:text-white mimin:text-xs mimin:capitalize mimin:tracking-wide mimin:bottom-[25%] mimin:left-[50%] -mimin:translate-x-[50%] mimin:mt-4 mimin:animate-pulse">
                 {aiStatus}
               </div>
             )}
@@ -357,7 +357,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
           {/* Nama AI dengan animasi slide up */}
           <motion.p
-            className="mimin-text-[#0096a2] mimin-text-base mimin-font-bold mimin-mt-5"
+            className="mimin:text-[#0096a2] mimin:text-base mimin:font-bold mimin:mt-5"
             // @ts-ignore
             variants={childVariants}
           >
@@ -366,7 +366,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
           {/* Timer dengan animasi counter */}
           <motion.p
-            className="mimin-text-[#0096a2] mimin-text-sm mimin-font-medium mimin-mt-0"
+            className="mimin:text-[#0096a2] mimin:text-sm mimin:font-medium mimin:mt-0"
             // @ts-ignore
             variants={childVariants}
             key={time} // Key berubah untuk trigger animasi
@@ -379,7 +379,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
           {/* Divider dengan animasi expand */}
           <motion.div
-            className="mimin-h-[1.5px] mimin-w-full mimin-bg-gray-200 mimin-my-6"
+            className="mimin:h-[1.5px] mimin:w-full mimin:bg-gray-200 mimin:my-6"
             // @ts-ignore
             variants={dividerVariants}
             initial="initial"
@@ -388,7 +388,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
           <audio
             ref={audioRef}
-            className="mimin-hidden"
+            className="mimin:hidden"
             controls
             autoPlay={false}
             onTimeUpdate={(e) => {
@@ -399,14 +399,14 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
           {/* Tombol hang up dengan animasi interaktif */}
           <motion.div
-            className="mimin-grid mimin-grid-cols-2 mimin-gap-4 mimin-w-full"
+            className="mimin:grid mimin:grid-cols-2 mimin:gap-4 mimin:w-full"
             // @ts-ignore
             variants={childVariants}
           >
-            <div className="mimin-col-span-2 mimin-flex mimin-items-center mimin-justify-center">
+            <div className="mimin:col-span-2 mimin:flex mimin:items-center mimin:justify-center">
               <motion.button
                 type="button"
-                className="mimin-cursor-pointer mimin-bg-gradient-to-br mimin-from-[#0096a2]/30 mimin-to-[#f26075]/30 mimin-rounded-full mimin-w-[60px] mimin-h-[60px] mimin-p-4 mimin-aspect-square mimin-flex mimin-items-center mimin-justify-center"
+                className="mimin:cursor-pointer mimin:bg-gradient-to-br mimin:from-[#0096a2]/30 mimin:to-[#f26075]/30 mimin:rounded-full mimin:w-[60px] mimin:h-[60px] mimin:p-4 mimin:aspect-square mimin:flex mimin:items-center mimin:justify-center"
                 // @ts-ignore
                 variants={hangUpButtonVariants}
                 initial="initial"
@@ -424,14 +424,14 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
                     : {}
                 }
               >
-                <MdPhone className="mimin-w-full mimin-h-full mimin-text-[#f26075]/90 mimin-rotate-90" />
+                <MdPhone className="mimin:w-full mimin:h-full mimin:text-[#f26075]/90 mimin:rotate-90" />
               </motion.button>
             </div>
           </motion.div>
 
           {/* Ripple effect untuk background */}
           <motion.div
-            className="mimin-absolute mimin-inset-0 mimin-pointer-events-none"
+            className="mimin:absolute mimin:inset-0 mimin:pointer-events-none"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.5 }}
@@ -439,7 +439,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             {[...Array(3)].map((_, i) => (
               <motion.div
                 key={i}
-                className="mimin-absolute mimin-top-1/2 mimin-left-1/2 mimin-w-4 mimin-h-4 mimin-bg-[#0096a2]/10 mimin-rounded-full"
+                className="mimin:absolute mimin:top-1/2 mimin:left-1/2 mimin:w-4 mimin:h-4 mimin:bg-[#0096a2]/10 mimin:rounded-full"
                 style={{
                   transform: "translate(-50%, -50%)",
                 }}
