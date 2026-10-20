@@ -7,9 +7,10 @@ import { cn } from "../../utils";
 interface IProps {
   onSuccessLogin: (token: string, phone: { phone: string; value: string }) => void;
   token: string;
+  sessionExpired?: boolean;
 }
 
-function AuthWindow({ onSuccessLogin, token }: IProps) {
+function AuthWindow({ onSuccessLogin, token, sessionExpired }: IProps) {
   const [step, setStep] = useState<"landing-section" | "sign-in" | "create-account">("landing-section");
   const { config } = useConfigStore();
 
@@ -22,6 +23,13 @@ function AuthWindow({ onSuccessLogin, token }: IProps) {
         "mimin-max-w-xl mimin-max-h-[700px] mimin-overflow-y-auto mimin-mx-auto mimin-bg-white mimin-rounded-lg mimin-shadow-lg", 
         ["sign-in", "create-account", "landing-section"].includes(step) ? "mimin-p-4 sm:mimin-p-4" : "mimin-p-4 sm:mimin-p-10"
       )}>
+        {sessionExpired && (
+          <div className="mimin-w-full mimin-mb-4 mimin-px-3 mimin-py-2 mimin-bg-amber-50 mimin-border mimin-border-amber-200 mimin-rounded-lg mimin-text-center">
+            <p className="mimin-text-xs mimin-text-amber-700 mimin-font-medium">
+              Your session has expired. Please sign in again.
+            </p>
+          </div>
+        )}
         {step === "landing-section" && (
           <div className="mimin-text-center mimin-space-y-3">
             {config?.theme?.chatWindow.header?.avatarSrc && (
