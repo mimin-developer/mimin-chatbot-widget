@@ -98,7 +98,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               </span>
               <button
                 type="button"
-                className="mimin:p-0.5 mimin:rounded-full mimin:bg-red-100 mimin:text-red-600 hover:mimin:bg-red-200 mimin:cursor-pointer"
+                className="mimin:p-0.5 mimin:rounded-full mimin:bg-red-100 mimin:text-red-600 mimin:hover:bg-red-200 mimin:cursor-pointer"
                 onClick={() => setSelectedMedia((prev) => prev.filter((_, i) => i !== idx))}
               >
                 <X className="mimin:w-3 mimin:h-3" />
@@ -132,7 +132,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="mimin:p-2 mimin:rounded-md mimin:bg-white/20 hover:mimin:bg-white/30 mimin:text-white mimin:cursor-pointer mimin:transition-colors"
+              className="mimin:p-2 mimin:rounded-md mimin:bg-white/20 mimin:hover:bg-white/30 mimin:text-white mimin:cursor-pointer mimin:transition-colors"
               style={{
                 height: "38px",
                 display: "flex",
@@ -172,7 +172,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           ref={textareaRef}
         />
         <button
-          className="mimin:absolute mimin:right-4 mimin:top-1/2 -mimin:translate-y-1/2 mimin:cursor-pointer disabled:mimin:opacity-50 disabled:mimin:cursor-not-allowed"
+          className="mimin:absolute mimin:right-4 mimin:top-1/2 mimin:-translate-y-1/2 mimin:cursor-pointer mimin:disabled:opacity-50 mimin:disabled:cursor-not-allowed"
           disabled={message.trim().length === 0 && selectedMedia.length === 0 && !loading}
           style={{
             color:

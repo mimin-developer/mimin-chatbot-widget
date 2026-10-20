@@ -76,7 +76,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               className="mimin:w-5 mimin:h-5"
               color={config?.theme?.chatWindow?.header?.voiceAIColorButton || "#ffffff"}
             />
-            <div className="mimin:absolute -mimin:top-0 -mimin:right-0">
+            <div className="mimin:absolute mimin:-top-0 mimin:-right-0">
               <p className="mimin:text-[8px] mimin:font-medium">AI</p>
             </div>
           </button>

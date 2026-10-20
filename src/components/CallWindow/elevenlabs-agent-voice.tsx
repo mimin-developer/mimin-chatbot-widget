@@ -14,7 +14,7 @@ import {
 import { useConfigStore } from "../../hooks/config-store";
 import { useConversation } from "@elevenlabs/react";
 import { API } from "../../services";
-import { formatAudioCurrentTime } from "../../utils";
+import { formatAudioCurrentTime, getApiErrorMessage } from "../../utils";
 import { ElevenLabsAudioVisualizer } from "./elevenlabs-audio-visualizer";
 
 interface ElevenLabsAgentVoiceProps {
@@ -31,6 +31,7 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
   const { config } = useConfigStore();
   const [isAnimating, setIsAnimating] = useState(false);
   const [time, setTime] = useState("00:00:00");
+  const [callError, setCallError] = useState<string | null>(null);
   const [isStartSession, setIsStartSession] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -51,6 +52,7 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
     setTimeout(() => {
       setIsStartSession(false);
       setTime("00:00:00");
+      setCallError(null);
       onToggleCallWindow();
       setIsAnimating(false);
     }, 300);
@@ -61,6 +63,7 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
     if (isVisible && phoneOrIP) {
       (async () => {
         try {
+          setCallError(null);
           const res = await API('axios', 'customer')({
             url: `/v1/setting/eleven-labs/get-token/${config?.credentials?.username}`,
             method: 'GET',
@@ -79,7 +82,8 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
           });
           setIsStartSession(true);
         } catch (error) {
-          console.error(`Failed to start conversation: ${error instanceof Error ? error.message : "Unknown error"}`);
+          console.error("Failed to start conversation:", error);
+          setCallError(getApiErrorMessage(error, "Gagal membuat sesi realtime"));
         }
       })();
     } else {
@@ -87,6 +91,7 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
         try { await conversation.endSession(); } catch { }
         setIsStartSession(false);
         setElapsedSeconds(0);
+        setCallError(null);
       })();
     }
   }, [isVisible]);
@@ -126,7 +131,7 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
             initial="initial"
             animate="animate"
           >
-            {isStartSession ? "IN CALL" : "CONNECTING..."}
+            {callError ? "CALL FAILED" : isStartSession ? "IN CALL" : "CONNECTING..."}
           </motion.h4>
 
           {/* Lingkaran Audio */}
@@ -176,11 +181,21 @@ export const ElevenLabsAgentVoiceLayout: React.FC<ElevenLabsAgentVoiceProps> = (
               />
             </div>
             {isStartSession && (
-              <div className="mimin:absolute mimin:text-white mimin:text-xs mimin:capitalize mimin:tracking-wide mimin:bottom-[25%] mimin:left-[50%] -mimin:translate-x-[50%] mimin:mt-4 mimin:animate-pulse">
+              <div className="mimin:absolute mimin:text-white mimin:text-xs mimin:capitalize mimin:tracking-wide mimin:bottom-[25%] mimin:left-[50%] mimin:-translate-x-[50%] mimin:mt-4 mimin:animate-pulse">
                 {conversation.isSpeaking ? "speaking" : "listening"}
               </div>
             )}
           </div>
+
+          {callError && (
+            <motion.p
+              className="mimin:mt-4 mimin:px-3 mimin:py-2 mimin:rounded-lg mimin:bg-red-50 mimin:text-red-600 mimin:text-xs mimin:text-center mimin:max-w-[280px] mimin:break-words"
+              // @ts-ignore
+              variants={childVariants}
+            >
+              {callError}
+            </motion.p>
+          )}
 
           {/* Nama AI */}
           <motion.p

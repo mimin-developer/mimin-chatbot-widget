@@ -398,7 +398,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
               />
               <button
                 type="button"
-                className="mimin:absolute mimin:right-2.5 mimin:top-1/2 -mimin:translate-y-1/2 mimin:text-gray-500"
+                className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500"
                 onClick={() => setShowPassword((e) => !e)}
               >
                 {showPassword ? (
@@ -429,7 +429,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
               />
               <button
                 type="button"
-                className="mimin:absolute mimin:right-2.5 mimin:top-1/2 -mimin:translate-y-1/2 mimin:text-gray-500"
+                className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500"
                 onClick={() => setShowConfirmPassword((e) => !e)}
               >
                 {showConfirmPassword ? (

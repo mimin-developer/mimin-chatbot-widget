@@ -70,7 +70,7 @@ const LoginSection = ({ onClickCreateAccount, onSuccessLogin }: IProps) => {
     })
       .then((res) => {
         startServer(() => {
-          localStorage.setItem(`mimin:token-${config?.credentials?.username}`, res.data.token);
+          localStorage.setItem(`mimin-token-${config?.credentials?.username}`, res.data.token);
           const phone = { phone: res.data.data.phone, value: res.data.data.phone };
           onSuccessLogin(res.data.token, phone);
         });
@@ -144,7 +144,7 @@ const LoginSection = ({ onClickCreateAccount, onSuccessLogin }: IProps) => {
             />
             <button
               type="button"
-              className="mimin:absolute mimin:right-2.5 mimin:top-1/2 -mimin:translate-y-1/2"
+              className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2"
               onClick={() => setShowPassword((e) => !e)}
             >
               {showPassword ? (

@@ -21,7 +21,7 @@ function AuthWindow({ onSuccessLogin, token, sessionExpired }: IProps) {
     >
       <div className={cn(
         "mimin:max-w-xl mimin:max-h-[700px] mimin:overflow-y-auto mimin:mx-auto mimin:bg-white mimin:rounded-lg mimin:shadow-lg", 
-        ["sign-in", "create-account", "landing-section"].includes(step) ? "mimin:p-4 sm:mimin:p-4" : "mimin:p-4 sm:mimin:p-10"
+        ["sign-in", "create-account", "landing-section"].includes(step) ? "mimin:p-4 mimin:sm:p-4" : "mimin:p-4 mimin:sm:p-10"
       )}>
         {sessionExpired && (
           <div className="mimin:w-full mimin:mb-4 mimin:px-3 mimin:py-2 mimin:bg-amber-50 mimin:border mimin:border-amber-200 mimin:rounded-lg mimin:text-center">

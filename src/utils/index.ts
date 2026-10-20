@@ -20,6 +20,16 @@ export const formatAudioCurrentTime = (seconds: number): string => {
     .join(':');
 };
 
+export const getApiErrorMessage = (err: unknown, fallback: string): string => {
+  const data = (err as { response?: { data?: unknown } })?.response?.data;
+  if (typeof data === "string" && data.trim()) return data;
+  const message = (data as { message?: unknown })?.message;
+  if (typeof message === "string" && message.trim()) return message;
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err) return err;
+  return fallback;
+};
+
 export const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

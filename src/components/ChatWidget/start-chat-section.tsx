@@ -14,7 +14,7 @@ export const StartChatSection = ({ onClickStartChat }: IProps) => {
         backgroundColor: config?.theme?.chatWindow.greating?.color || "#0096A2",
       }}
     >
-      <div className="mimin:px-4 sm:mimin:px-10 mimin:flex mimin:flex-col mimin:justify-between mimin:h-full mimin:overflow-y-auto mimin:max-w-4xl mimin:mx-auto">
+      <div className="mimin:px-4 mimin:sm:px-10 mimin:flex mimin:flex-col mimin:justify-between mimin:h-full mimin:overflow-y-auto mimin:max-w-4xl mimin:mx-auto">
         <div className="mimin:flex mimin:flex-col mimin:items-center mimin:justify-center mimin:mt-32">
           <h2
             className="mimin:text-2xl mimin:font-bold"
@@ -38,7 +38,7 @@ export const StartChatSection = ({ onClickStartChat }: IProps) => {
               target.src =
                 "https://res.cloudinary.com/dctqloe37/image/upload/v1752571979/Icon_AI_Agent_lrdrhr.png";
             }}
-            className="mimin:w-40 mimin:h-w-40 mimin:rounded-full mimin:mt-6"
+            className="mimin:w-40 mimin:h-40 mimin:rounded-full mimin:mt-6"
           />
         </div>
         <div className="mimin:flex mimin:flex-col mimin:items-center mimin:justify-center mimin:px-6 mimin:py-10 mimin:rounded-t-3xl mimin:mt-6 mimin:bg-white mimin:h-max">

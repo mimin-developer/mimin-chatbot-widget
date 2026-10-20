@@ -691,7 +691,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.8, y: -10 }}
               transition={{ duration: 0.25, ease: "easeOut" }}
-              className="mimin:absolute -mimin:top-3 mimin:right-0 mimin:text-white mimin:px-1.5 mimin:py-0.5 mimin:text-[10px] mimin:rounded-full mimin:bg-red-500 mimin:animate-pulse"
+              className="mimin:absolute mimin:-top-3 mimin:right-0 mimin:text-white mimin:px-1.5 mimin:py-0.5 mimin:text-[10px] mimin:rounded-full mimin:bg-red-500 mimin:animate-pulse"
             >
               In Call
             </motion.div>

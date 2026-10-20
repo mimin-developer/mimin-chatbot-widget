@@ -12,7 +12,7 @@ import {
 import { OpenAIAudioVisualizer } from "./openai-audio-visualizer";
 import { useConfigStore } from "../../hooks/config-store";
 import { API, getClientInfo } from "../../services";
-import { blobToBase64, formatAudioCurrentTime } from "../../utils";
+import { blobToBase64, formatAudioCurrentTime, getApiErrorMessage } from "../../utils";
 
 interface OpenAiAgentVoiceProps {
   isVisible: boolean;
@@ -25,6 +25,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 }) => {
   const [isAnimating, setIsAnimating] = useState(false);
   const [time, setTime] = useState("00:00:00");
+  const [callError, setCallError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
@@ -142,106 +143,113 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
     if (isVisible) {
       (async () => {
-        peerConnection = new RTCPeerConnection();
+        try {
+          setCallError(null);
 
-        const sessionRes = await API("axios", "customer")(
-          `/v1/call-session/create-realtime-session/${config?.credentials?.username}`,
-          {
-            method: "POST",
-            headers: {
-              "x-api-key": config?.credentials?.apiKey
+          peerConnection = new RTCPeerConnection();
+
+          const sessionRes = await API("axios", "customer")(
+            `/v1/call-session/create-realtime-session/${config?.credentials?.username}`,
+            {
+              method: "POST",
+              headers: {
+                "x-api-key": config?.credentials?.apiKey
+              }
             }
-          }
-        );
-
-        const { client_secret, model, instructions } = sessionRes.data;
-
-        peerConnection.ontrack = (event: RTCTrackEvent) => {
-          if (audioRef.current) {
-            setAiMediaStream(event.streams[0]);
-            audioRef.current.srcObject = event.streams[0];
-            audioRef.current.play();
-          }
-        };
-
-        const dataChannel = peerConnection.createDataChannel("response");
-
-        const configureData = () => {
-          dataChannel.send(
-            JSON.stringify({
-              type: "session.update",
-              session: {
-                modalities: ["text", "audio"],
-                tools: [],
-              },
-            })
           );
-        };
 
-        dataChannel.addEventListener("message", (event) => {
-          const message = JSON.parse(event.data);
+          const { client_secret, model, instructions } = sessionRes.data;
 
-          switch (message.type) {
-            case "output_audio_buffer.started":
-              setAiStatus("speaking");
-              break;
-            case "output_audio_buffer.stopped":
-              setAiStatus("idle");
-              break;
-            case "input_audio_buffer.speech_started":
-              setAiStatus("listening");
-              break;
-            default:
-              break;
-          }
-        });
-
-        dataChannel.addEventListener("open", async () => {
-          configureData();
-          startRecording();
-
-          const startConversation = {
-            type: "response.create",
-            response: {
-              instructions: instructions,
-            },
+          peerConnection.ontrack = (event: RTCTrackEvent) => {
+            if (audioRef.current) {
+              setAiMediaStream(event.streams[0]);
+              audioRef.current.srcObject = event.streams[0];
+              audioRef.current.play();
+            }
           };
 
-          dataChannel.send(JSON.stringify(startConversation));
-        });
+          const dataChannel = peerConnection.createDataChannel("response");
 
-        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-          mediaStream = stream;
-
-          stream
-            .getTracks()
-            .forEach((track) =>
-              peerConnection!.addTransceiver(track, { direction: "sendrecv" })
-            );
-
-          peerConnection!.createOffer().then((offer) => {
-            peerConnection!.setLocalDescription(offer);
-
-            API("fetch", "openai")(`/realtime?model=${model}`, {
-              method: "POST",
-              body: offer.sdp,
-              headers: {
-                Authorization: `Bearer ${client_secret.value}`,
-                "Content-Type": "application/sdp",
-              },
-              // @ts-expect-error: fetch support duplex property
-              duplex: "half",
-            })
-              .then((r) => r.text())
-              .then((sdp) => {
-                peerConnection!.setRemoteDescription({
-                  sdp,
-                  type: "answer",
-                });
+          const configureData = () => {
+            dataChannel.send(
+              JSON.stringify({
+                type: "session.update",
+                session: {
+                  modalities: ["text", "audio"],
+                  tools: [],
+                },
               })
-              .catch((err) => console.error(err));
+            );
+          };
+
+          dataChannel.addEventListener("message", (event) => {
+            const message = JSON.parse(event.data);
+
+            switch (message.type) {
+              case "output_audio_buffer.started":
+                setAiStatus("speaking");
+                break;
+              case "output_audio_buffer.stopped":
+                setAiStatus("idle");
+                break;
+              case "input_audio_buffer.speech_started":
+                setAiStatus("listening");
+                break;
+              default:
+                break;
+            }
           });
-        });
+
+          dataChannel.addEventListener("open", async () => {
+            configureData();
+            startRecording();
+
+            const startConversation = {
+              type: "response.create",
+              response: {
+                instructions: instructions,
+              },
+            };
+
+            dataChannel.send(JSON.stringify(startConversation));
+          });
+
+          navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            mediaStream = stream;
+
+            stream
+              .getTracks()
+              .forEach((track) =>
+                peerConnection!.addTransceiver(track, { direction: "sendrecv" })
+              );
+
+            peerConnection!.createOffer().then((offer) => {
+              peerConnection!.setLocalDescription(offer);
+
+              API("fetch", "openai")(`/realtime?model=${model}`, {
+                method: "POST",
+                body: offer.sdp,
+                headers: {
+                  Authorization: `Bearer ${client_secret.value}`,
+                  "Content-Type": "application/sdp",
+                },
+                // @ts-expect-error: fetch support duplex property
+                duplex: "half",
+              })
+                .then((r) => r.text())
+                .then((sdp) => {
+                  peerConnection!.setRemoteDescription({
+                    sdp,
+                    type: "answer",
+                  });
+                })
+                .catch((err) => console.error(err));
+            });
+          });
+        } catch (error) {
+          console.error("Failed to create realtime session:", error);
+          setCallError(getApiErrorMessage(error, "Gagal membuat sesi realtime"));
+        }
       })();
 
       return () => {
@@ -277,6 +285,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
       }
 
       setAiMediaStream(null);
+      setCallError(null);
       onToggleCallWindow();
       setIsAnimating(false);
     }, 300);
@@ -302,7 +311,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             initial="initial"
             animate="animate"
           >
-            IN CALL
+            {callError ? "CALL FAILED" : "IN CALL"}
           </motion.h4>
 
           {/* Lingkaran audio dengan animasi berlapis */}
@@ -349,11 +358,21 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
               />
             </div>
             {!!aiMediaStream && (
-              <div className="mimin:absolute mimin:text-white mimin:text-xs mimin:capitalize mimin:tracking-wide mimin:bottom-[25%] mimin:left-[50%] -mimin:translate-x-[50%] mimin:mt-4 mimin:animate-pulse">
+              <div className="mimin:absolute mimin:text-white mimin:text-xs mimin:capitalize mimin:tracking-wide mimin:bottom-[25%] mimin:left-[50%] mimin:-translate-x-[50%] mimin:mt-4 mimin:animate-pulse">
                 {aiStatus}
               </div>
             )}
           </div>
+
+          {callError && (
+            <motion.p
+              className="mimin:mt-4 mimin:px-3 mimin:py-2 mimin:rounded-lg mimin:bg-red-50 mimin:text-red-600 mimin:text-xs mimin:text-center mimin:max-w-[280px] mimin:break-words"
+              // @ts-ignore
+              variants={childVariants}
+            >
+              {callError}
+            </motion.p>
+          )}
 
           {/* Nama AI dengan animasi slide up */}
           <motion.p

@@ -35,7 +35,7 @@ const MediaItemRenderer: React.FC<{ item: MediaItem; isUser: boolean }> = ({ ite
     return (
       <>
         <div
-          className="mimin:max-w-full mimin:rounded-lg mimin:overflow-hidden mimin:border mimin:border-gray-100 mimin:bg-white mimin:cursor-zoom-in hover:mimin:opacity-95 mimin:transition-opacity"
+          className="mimin:max-w-full mimin:rounded-lg mimin:overflow-hidden mimin:border mimin:border-gray-100 mimin:bg-white mimin:cursor-zoom-in mimin:hover:opacity-95 mimin:transition-opacity"
           onClick={() => setIsZoomed(true)}
         >
           <img
@@ -62,7 +62,7 @@ const MediaItemRenderer: React.FC<{ item: MediaItem; isUser: boolean }> = ({ ite
               />
               <button
                 type="button"
-                className="mimin:fixed mimin:top-4 mimin:right-4 mimin:p-2.5 mimin:rounded-full mimin:bg-black/50 hover:mimin:bg-black/80 mimin:text-white mimin:cursor-pointer mimin:transition-colors mimin:z-[100000]"
+                className="mimin:fixed mimin:top-4 mimin:right-4 mimin:p-2.5 mimin:rounded-full mimin:bg-black/50 mimin:hover:bg-black/80 mimin:text-white mimin:cursor-pointer mimin:transition-colors mimin:z-[100000]"
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsZoomed(false);
@@ -98,7 +98,7 @@ const MediaItemRenderer: React.FC<{ item: MediaItem; isUser: boolean }> = ({ ite
         href={item.data}
         target="_blank"
         rel="noopener noreferrer"
-        className="mimin:text-xs hover:mimin:underline mimin:font-semibold"
+        className="mimin:text-xs mimin:hover:underline mimin:font-semibold"
         style={{ color: buttonColor }}
       >
         Open
