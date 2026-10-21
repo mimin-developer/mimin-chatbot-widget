@@ -1,28 +1,43 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   ChatbotConfig,
   IESResponse,
   Interaction,
+  MediaItem,
   Message,
 } from "../../types";
 import { useConfigStore } from "../../hooks/config-store";
+import { useInteractionsStore } from "../../hooks/interaction-store";
 import AuthWindow from "../Auth";
 import { ChatHeader } from "./header";
 import { ChatContent } from "./chat-content";
 import { ChatInput } from "./input";
 import { StartChatSection } from "./start-chat-section";
+import { ConfigErrorCard } from "./config-error-card";
+import { VoiceWidget } from "./voice-widget";
+import type { ReplyMessageInfo } from "./form-send";
 import { motion, AnimatePresence } from "framer-motion";
 import { API, getClientInfo } from "../../services";
-import { OpenAiAgentVoiceLayout } from "../CallWindow/openai-agent-voice";
-import { ElevenLabsAgentVoiceLayout } from "../CallWindow/elevenlabs-agent-voice";
+import { AgentVoiceLayout } from "../CallWindow/agent-voice";
 import { io, Socket } from "socket.io-client";
+import { MessageCircle } from "lucide-react";
 import { ENV } from "../../config/environment";
-import { clearCustomerToken, getCustomerToken, isUnauthorized } from "../../utils/session";
+import {
+  clearCustomerToken,
+  getCustomerToken,
+  isUnauthorized,
+} from "../../utils/session";
 
 interface ChatWidgetProps {
   config?: ChatbotConfig;
   signature: string;
-  voiceAgent: 'elevenlabs' | 'openai';
+  voiceName?: string;
+  configErrors?: string[];
 }
 
 interface ConversationMessage {
@@ -34,6 +49,8 @@ interface ConversationMessage {
   status: string;
   from_chatbot: boolean;
   created_at: string;
+  context_id?: string;
+  context?: Message["context"];
 }
 
 interface ConversationResponse {
@@ -43,6 +60,15 @@ interface ConversationResponse {
   };
   messages: ConversationMessage[];
 }
+
+interface PendingMessage {
+  tempId: string;
+  text: string;
+  media?: MediaItem[];
+  abortController: AbortController;
+}
+
+const CALL_TOGGLE_COOLDOWN_MS = 5_000;
 
 function base64ToBlobUrl(base64: string): string {
   const [header, data] = base64.split(",");
@@ -64,72 +90,207 @@ function base64ToBlobUrl(base64: string): string {
   return URL.createObjectURL(blob);
 }
 
+const getFileExtension = (filename: string): string =>
+  filename.split(".").pop()?.toLowerCase() || "";
+
+const hasKnownExtension = (
+  name: string,
+  data: string,
+  extensions: string[]
+): boolean => {
+  if (extensions.includes(getFileExtension(name))) return true;
+  if (data) {
+    const cleanData = data.split("?")[0];
+    if (extensions.includes(getFileExtension(cleanData))) return true;
+  }
+  return false;
+};
+
+const classifyFileType = (
+  name: string,
+  data: string
+): "image" | "video" | "audio" | "document" => {
+  if (hasKnownExtension(name, data, ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]))
+    return "image";
+  if (
+    hasKnownExtension(name, data, [
+      "mp4",
+      "webm",
+      "mov",
+      "avi",
+      "mkv",
+      "m4v",
+      "3gp",
+      "ogv",
+    ])
+  )
+    return "video";
+  if (
+    hasKnownExtension(name, data, [
+      "mp3",
+      "wav",
+      "ogg",
+      "aac",
+      "m4a",
+      "webm",
+      "flac",
+    ])
+  )
+    return "audio";
+  return "document";
+};
+
 export const ChatWidget: React.FC<ChatWidgetProps> = ({
   config,
   signature,
-  voiceAgent
+  voiceName,
+  configErrors,
 }) => {
+  const widgetType = config?.widgetType ?? "chatbot";
+
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
-  const [phoneOrIP, setPhoneOrIP] = useState<{ name: string, value: string } | null>(null);
+  const [phoneOrIP, setPhoneOrIP] = useState<{ name: string; value: string } | null>(null);
   const [chatHistoryId, setChatHistoryId] = useState("");
   const [currentResponseMsg, setCurrentResponseMsg] = useState("");
-  const [interactions, setInteractions] = useState<Interaction[]>([]);
-  const [chatType, setChatType] = useState("");
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [isCallVisible, setIsCallVisible] = useState(false);
+  const [isCallToggleLocked, setIsCallToggleLocked] = useState(false);
   const [shouldRenderChat, setShouldRenderChat] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [isFirstTime, setIsFirstTime] = useState(true);
   const [sessionActive, setSessionActive] = useState(true);
+  const [replyToMessage, setReplyToMessage] = useState<ReplyMessageInfo | null>(null);
+
+  const interactions = useInteractionsStore((s) => s.interactions);
+  const chatType = useInteractionsStore((s) => s.chatType) ?? "";
 
   const blobUrlsRef = useRef<string[]>([]);
-  const { setConfig: setConfigStore, setSignature: setSignatureStore } =
-    useConfigStore();
+  // Data asli (data URL) tiap blob URL lampiran optimistic, supaya retry mengirim file utuh.
+  const blobSourcesRef = useRef<Map<string, string>>(new Map());
+  const pendingMessagesRef = useRef<Map<string, PendingMessage>>(new Map());
+  const tempIdCounterRef = useRef(0);
+  const handleSendMessageRef = useRef<
+    | ((message: string, media?: MediaItem[], replyToId?: string) => Promise<void>)
+    | null
+  >(null);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
-  const cancelSendMessage = () => {
+  const { setConfig: setConfigStore, setSignature: setSignatureStore } =
+    useConfigStore();
+
+  const updateInteractions = useCallback(
+    (
+      updater:
+        | Interaction[]
+        | ((prev: Interaction[]) => Interaction[])
+    ) => {
+      const store = useInteractionsStore.getState();
+      const next =
+        typeof updater === "function" ? updater(store.interactions) : updater;
+      store.setInteractions(next);
+    },
+    []
+  );
+
+  const updateChatType = useCallback((type: string) => {
+    useInteractionsStore.getState().setChatType(type);
+  }, []);
+
+  const cancelSendMessage = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-  };
+  }, []);
 
-  const addInteraction = (interaction: Interaction) => {
-    setInteractions((prev) => [interaction, ...prev]);
-  };
-
-  const updateInteractionByMessageId = (messageId: string, updates: Partial<Message>) => {
-    setInteractions((prev) =>
-      prev.map((item) => {
-        if (item.id !== messageId) return item;
-        if (item.human) {
-          return { ...item, human: { ...item.human, ...updates } };
-        }
-        if (item.ai) {
-          return { ...item, ai: { ...item.ai, ...updates } };
-        }
-        return item;
-      })
-    );
-  };
-
-  const updateAiInteractionByIndex = (index: number, message: Partial<Message>) => {
-    setInteractions((prev) => {
-      const next = [...prev];
-      const aiIndex = next.length - 1 - index;
-      if (next[aiIndex]?.ai) {
-        next[aiIndex] = {
-          ...next[aiIndex],
-          ai: { ...next[aiIndex].ai!, ...message },
-        };
+  const cancelPendingMessage = useCallback(
+    (tempId: string) => {
+      const pending = pendingMessagesRef.current.get(tempId);
+      if (pending) {
+        pending.abortController.abort();
+        pendingMessagesRef.current.delete(tempId);
       }
-      return next;
-    });
-  };
+      updateInteractions((prev) =>
+        prev.map((item) => {
+          if (item.id === tempId && item.human) {
+            return {
+              ...item,
+              human: {
+                ...item.human,
+                status: "failed" as const,
+                isError: true,
+                isUploading: false,
+              },
+            };
+          }
+          return item;
+        })
+      );
+    },
+    [updateInteractions]
+  );
+
+  const addInteraction = useCallback((interaction: Interaction) => {
+    useInteractionsStore.getState().addInteraction(interaction);
+  }, []);
+
+  const updateInteractionByMessageId = useCallback(
+    (messageId: string, updates: Partial<Message>) => {
+      updateInteractions((prev) =>
+        prev.map((item) => {
+          if (item.id !== messageId && !item.id.startsWith(messageId + "-"))
+            return item;
+          if (item.human) {
+            return { ...item, human: { ...item.human, ...updates } };
+          }
+          if (item.ai) {
+            return { ...item, ai: { ...item.ai, ...updates } };
+          }
+          return item;
+        })
+      );
+    },
+    [updateInteractions]
+  );
+
+  const updateAiInteractionByIndex = useCallback(
+    (index: number, message: Partial<Message>) => {
+      updateInteractions((prev) => {
+        const next = [...prev];
+        if (next[index]) {
+          next[index] = {
+            ...next[index],
+            ai: {
+              content: "",
+              additional_kwargs: {},
+              example: false,
+              ...next[index].ai,
+              ...message,
+            },
+          };
+        }
+        return next;
+      });
+    },
+    [updateInteractions]
+  );
+
+  const removeInteractionById = useCallback(
+    (messageId: string) => {
+      updateInteractions((prev) =>
+        prev.filter(
+          (item) =>
+            item.id !== messageId && !item.id.startsWith(messageId + "-")
+        )
+      );
+    },
+    [updateInteractions]
+  );
 
   const handleToggleChatWindow = () => {
     if (isChatVisible) {
@@ -140,12 +301,31 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     }
   };
 
-  const handleToggleCallWindow = () => {
-    setIsCallVisible(!isCallVisible);
-  };
+  const handleToggleCallWindow = useCallback(() => {
+    if (isCallToggleLocked) return;
+    setIsCallVisible((prev) => {
+      if (prev) {
+        // Call ended: lock the toggle briefly so a double-tap cannot restart it instantly
+        setIsCallToggleLocked(true);
+        if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = setTimeout(() => {
+          setIsCallToggleLocked(false);
+        }, CALL_TOGGLE_COOLDOWN_MS);
+      }
+      return !prev;
+    });
+  }, [isCallToggleLocked]);
 
-  const fetchConversations = async (fetchFrom: "send-message" | "global" = "global") => {
-    if (!config?.credentials?.username || !config?.credentials?.websiteId || !phoneOrIP?.value) return;
+  useEffect(() => {
+    return () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    };
+  }, []);
+
+  const fetchConversations = useCallback(async () => {
+    if (widgetType !== "chatbot") return;
+    if (!config?.credentials?.username || !config?.credentials?.websiteId || !phoneOrIP?.value)
+      return;
 
     setFetching(true);
     try {
@@ -168,6 +348,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       // Revoke blob URLs dari optimistic bubble sebelum replace dengan data real
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current = [];
+      blobSourcesRef.current.clear();
 
       const mappedInteractions: Interaction[] = data.messages
         .slice()
@@ -175,7 +356,15 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         .map((msg) => {
           // Backend terbalik: incoming = dari customer (human), outgoing = dari agent (ai)
           const isAgent = msg.direction === "outgoing";
-          const media = msg.file ? [{ type: "image", name: msg.file_name, data: msg.file }] : undefined;
+          const media = msg.file
+            ? [
+                {
+                  type: classifyFileType(msg.file_name, msg.file),
+                  name: msg.file_name,
+                  data: msg.file,
+                },
+              ]
+            : undefined;
 
           return {
             id: msg.id,
@@ -187,6 +376,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
                   additional_kwargs: {},
                   example: false,
                   media,
+                  status: "sent" as const,
+                  context_id: msg.context_id,
+                  context: msg.context,
                 },
             ai: isAgent
               ? {
@@ -194,79 +386,192 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
                   additional_kwargs: {},
                   example: false,
                   media,
+                  status: "sent" as const,
+                  context_id: msg.context_id,
+                  context: msg.context,
                 }
               : undefined,
           };
         });
 
-      if (!data.session?.active && fetchFrom === "send-message") {
-        return;
-      }
+      // BE hanya mengirim pesan sesi berjalan. Pesan sesi sebelumnya yang sudah
+      // tampil dipertahankan; bubble optimistic dan bubble sesi berjalan dibuang
+      // supaya tidak terduplikasi dengan data server.
+      updateInteractions((prev) => {
+        const serverIds = new Set(mappedInteractions.map((item) => item.id));
+        const oldestServerTime = mappedInteractions.length
+          ? new Date(
+              mappedInteractions[mappedInteractions.length - 1].date
+            ).getTime()
+          : Number.POSITIVE_INFINITY;
 
-      setInteractions(mappedInteractions);
+        const previousSessions = prev.filter(
+          (item) =>
+            !serverIds.has(item.id) &&
+            !item.id.startsWith("optimistic-") &&
+            new Date(item.date).getTime() < oldestServerTime
+        );
+        return [...mappedInteractions, ...previousSessions];
+      });
     } catch (error) {
       console.error("Failed to fetch conversations:", error);
     } finally {
       setFetching(false);
     }
-  };
+  }, [
+    widgetType,
+    config?.credentials?.username,
+    config?.credentials?.websiteId,
+    config?.credentials?.apiKey,
+    phoneOrIP?.value,
+    updateInteractions,
+  ]);
 
-  const handleSendMessage = async (message: string, media?: { type: string; name: string; data: string }[]) => {
-    if (!phoneOrIP) return;
-    cancelSendMessage();
-    setLoading(true);
+  const handleRetryMessage = useCallback(
+    async (tempId: string) => {
+      // Baca langsung dari state render terakhir; updater setInteractions tidak
+      // dijamin sinkron sehingga data bubble gagal bisa masih kosong saat dicek
+      const item = interactions.find((i) => i.id === tempId);
+      if (!item?.human) return;
 
-    const isWebsite = config?.widgetType === "website";
-    const hasMedia = (media?.length ?? 0) > 0;
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
+      const failedText = item.human.content;
+      // Lampiran optimistic tampil sebagai blob URL; kirim ulang dengan data aslinya
+      const failedMedia = item.human.media?.map((m) => {
+        const source = blobSourcesRef.current.get(m.data);
+        return source ? { ...m, data: source } : m;
+      });
+      const failedReplyToId = item.human.context_id;
 
-    // Optimistic bubble: convert base64 ke blob URL agar tidak membebani state
-    const optimisticMedia = media?.map((m) => {
-      if (m.data.startsWith("data:")) {
-        const blobUrl = base64ToBlobUrl(m.data);
-        blobUrlsRef.current.push(blobUrl);
-        return { ...m, data: blobUrl };
+      if (!failedText && !failedMedia?.length) return;
+
+      removeInteractionById(tempId);
+
+      if (handleSendMessageRef.current) {
+        await handleSendMessageRef.current(failedText, failedMedia, failedReplyToId);
       }
-      return m;
-    });
+    },
+    [interactions, removeInteractionById]
+  );
 
-    // Jika sesi sudah berakhir, reset interactions lalu tambahkan optimistic bubble saja
-    if (!sessionActive) {
-      setInteractions([]);
-    }
+  const handleSendMessage = useCallback(
+    async (message: string, media?: MediaItem[], replyToId?: string) => {
+      handleSendMessageRef.current = handleSendMessage;
+      if (!phoneOrIP) return;
+      cancelSendMessage();
+      setLoading(true);
 
-    let optimisticId: string | null = null;
+      tempIdCounterRef.current += 1;
+      const baseTempId = `optimistic-${Date.now()}-${tempIdCounterRef.current}`;
 
-    if (message || optimisticMedia) {
-      optimisticId = crypto.randomUUID();
-      const optimisticInteraction: Interaction = {
-        human: {
-          content: message,
-          additional_kwargs: {},
-          example: false,
-          media: optimisticMedia,
-          isError: false,
-        },
-        date: new Date(),
-        id: optimisticId,
+      const optimisticMedia = media?.map((m) => {
+        if (m.data.startsWith("data:")) {
+          const blobUrl = base64ToBlobUrl(m.data);
+          blobUrlsRef.current.push(blobUrl);
+          blobSourcesRef.current.set(blobUrl, m.data);
+          return { ...m, data: blobUrl };
+        }
+        return m;
+      });
+
+      let optimisticId: string | null = null;
+      const optimisticInteractions: Interaction[] = [];
+
+      if (message || (optimisticMedia && optimisticMedia.length > 0)) {
+        optimisticId = baseTempId;
+
+        const optReplyContext =
+          replyToId && replyToMessage
+            ? {
+                id: replyToMessage.id,
+                direction: (replyToMessage.sender === "You"
+                  ? "outgoing"
+                  : "incoming") as "incoming" | "outgoing",
+                text: replyToMessage.text,
+                file: "",
+                file_name: replyToMessage.file_name || "",
+              }
+            : undefined;
+
+        if (optimisticMedia && optimisticMedia.length > 1) {
+          optimisticMedia.forEach((m, index) => {
+            const id = `${baseTempId}-${index}`;
+            optimisticInteractions.push({
+              human: {
+                content: index === 0 ? message : "",
+                additional_kwargs: {},
+                example: false,
+                media: [m],
+                isError: false,
+                status: "pending",
+                _tempId: id,
+                isUploading: true,
+                context_id: replyToId,
+                context: optReplyContext,
+              },
+              date: new Date(),
+              id,
+            });
+          });
+        } else {
+          optimisticInteractions.push({
+            human: {
+              content: message,
+              additional_kwargs: {},
+              example: false,
+              media: optimisticMedia || [],
+              isError: false,
+              status: "pending",
+              _tempId: baseTempId,
+              isUploading: true,
+              context_id: replyToId,
+              context: optReplyContext,
+            },
+            date: new Date(),
+            id: baseTempId,
+          });
+        }
+
+        if (!sessionActive) {
+          updateInteractions(optimisticInteractions);
+        } else {
+          updateInteractions((prev) => [
+            ...optimisticInteractions.slice().reverse(),
+            ...prev,
+          ]);
+        }
+      }
+
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
+      const pendingMsg: PendingMessage = {
+        tempId: baseTempId,
+        text: message,
+        media,
+        abortController,
+      };
+      const tempIds = [baseTempId];
+      if (optimisticMedia && optimisticMedia.length > 1) {
+        optimisticMedia.forEach((_, i) => {
+          if (i > 0) tempIds.push(`${baseTempId}-${i}`);
+        });
+      }
+      tempIds.forEach((id) => {
+        pendingMessagesRef.current.set(id, pendingMsg);
+      });
+
+      const markFailed = () => {
+        tempIds.forEach((id) => {
+          pendingMessagesRef.current.delete(id);
+          updateInteractionByMessageId(id, {
+            isError: true,
+            status: "failed",
+            isUploading: false,
+          });
+        });
       };
 
-      if (!sessionActive) {
-        setInteractions([optimisticInteraction]);
-      } else {
-        addInteraction(optimisticInteraction);
-      }
-    }
-
-    try {
-      let response: Response;
-
-      if (isWebsite) {
-        const token = getCustomerToken(config?.credentials?.username);
-        const name = phoneOrIP.name || phoneOrIP.value;
-
-        // Kirim base64 asli ke backend (bukan blob URL)
+      try {
         const rawMedia = media?.map((m) => {
           if (m.data.startsWith("blob:")) {
             return { ...m, data: "" };
@@ -274,7 +579,12 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
           return m;
         });
 
-        const websitePayload = {
+        let response: Response;
+
+        const token = getCustomerToken(config?.credentials?.username);
+        const name = phoneOrIP.name || phoneOrIP.value;
+
+        const chatbotPayload = {
           sender: {
             name,
             phone: phoneOrIP.value,
@@ -285,7 +595,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
           },
           message: {
             id: crypto.randomUUID(),
-            reply_to: "",
+            reply_to: replyToId || "",
             text: message,
             media: rawMedia || [],
           },
@@ -297,78 +607,49 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             headers: {
               "Content-Type": "application/json",
               "x-api-key": config?.credentials?.apiKey || "",
-              ...(token ? { "Authorization-Customer": `Bearer ${token}` } : {}),
+              ...(token
+                ? { "Authorization-Customer": `Bearer ${token}` }
+                : {}),
               Accept: "text/event-stream",
-            },
-            body: JSON.stringify(websitePayload),
-            method: "POST",
-            signal: abortController.signal,
-          }
-        );
-      } else {
-        let name = phoneOrIP.name;
-        if (!name) name = navigator.userAgent;
-
-        const mediaItem = media?.[0];
-        const chatbotPayload = {
-          name,
-          phone: phoneOrIP.value,
-          message_id: crypto.randomUUID(),
-          message,
-          media_type: mediaItem ? mediaItem.type : "text",
-          media: mediaItem?.data?.startsWith("blob:") ? "" : (mediaItem?.data || ""),
-          type: chatType || "",
-        };
-
-        response = await API("fetch", "chatbot")(
-          `/chat/new-website/${config?.credentials?.username}`,
-          {
-            headers: {
-              Signature: signature,
-              Accept: "text/event-stream",
-              "Content-Type": "application/json",
             },
             body: JSON.stringify(chatbotPayload),
             method: "POST",
             signal: abortController.signal,
           }
         );
-      }
 
-      if (!response.ok) {
-        if (
-          isUnauthorized(response.status) &&
-          isWebsite &&
-          config?.theme?.chatWindow?.enableLogin
-        ) {
-          const username = config?.credentials?.username;
-          console.error(
-            `Session expired: got 401 while sending message for user "${username}"`
-          );
-          if (username) {
-            clearCustomerToken(username);
+        if (!response.ok) {
+          markFailed();
+
+          if (
+            isUnauthorized(response.status) &&
+            config?.theme?.chatWindow?.enableLogin
+          ) {
+            const username = config?.credentials?.username;
+            console.error(
+              `Session expired: got 401 while sending message for user "${username}"`
+            );
+            if (username) {
+              clearCustomerToken(username);
+            }
+            blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+            blobUrlsRef.current = [];
+            blobSourcesRef.current.clear();
+            updateInteractions([]);
+            setCurrentResponseMsg("");
+            setSessionExpired(true);
+            setIsAuthenticated(false);
+            return;
           }
-          blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-          blobUrlsRef.current = [];
-          setInteractions([]);
-          setCurrentResponseMsg("");
-          setSessionExpired(true);
-          setIsAuthenticated(false);
+
+          console.error("Failed to send message");
           return;
         }
 
-        if (optimisticId) {
-          updateInteractionByMessageId(optimisticId, { isError: true });
-        }
-        console.error("Failed to send message");
-        return;
-      }
+        const reader = response
+          .body!.pipeThrough(new TextDecoderStream())
+          .getReader();
 
-      const reader = response
-        .body!.pipeThrough(new TextDecoderStream())
-        .getReader();
-
-      if (isWebsite) {
         let buffer = "";
         while (true) {
           if (abortController.signal.aborted) break;
@@ -396,73 +677,94 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
                 content: res.message,
                 example: false,
               });
-              if (!chatType) setChatType(res.type);
+              if (!chatType) updateChatType(res.type);
               setChatHistoryId(res.chat_history_id);
             } else if (res.event === "token") {
               if (res.data) setCurrentResponseMsg((prev) => prev + res.data);
             }
           }
         }
-      } else {
-        while (true) {
-          if (abortController.signal.aborted) break;
-          const { value, done } = await reader!.read();
-          if (done) break;
 
-          const identifier = '{"event": ';
-          const events: IESResponse[] = value
-            .split(`data: ${identifier}`)
-            .filter(Boolean)
-            .map((res) =>
-              JSON.parse(`${identifier}${res}`.replace(/\n\n$/gm, ""))
-            )
-            .filter((res) => (res.event === "token" ? !!res.data : true));
-
-          events.forEach(async (res) => {
-            if (res.event === "payload") {
-              updateAiInteractionByIndex(0, {
-                additional_kwargs: {},
-                content: res.message,
-                example: false,
-              });
-              if (!chatType) setChatType(res.type);
-              setChatHistoryId(res.chat_history_id);
-            } else if (res.event === "token") {
-              setCurrentResponseMsg((prev) => prev + res.data);
-            }
+        // Mark optimistic bubbles as sent (no longer uploading)
+        tempIds.forEach((id) => {
+          pendingMessagesRef.current.delete(id);
+          updateInteractionByMessageId(id, {
+            status: "sent",
+            isUploading: false,
           });
-        }
-      }
-
-      // Refetch conversations setelah request selesai untuk mendapatkan data real dari backend
-      if (isWebsite && (!sessionActive || hasMedia)) {
-        await new Promise<void>((resolve) => {
-          setTimeout(() => {
-            fetchConversations("send-message");
-            resolve();
-          }, 10_000);
         });
-      }
-    } catch (err: any) {
-      if (err?.name !== "AbortError") {
-        if (optimisticId) {
-          updateInteractionByMessageId(optimisticId, { isError: true });
+
+        setTimeout(() => {
+          fetchConversations();
+        }, 5_000);
+      } catch (err: any) {
+        markFailed();
+        if (err?.name !== "AbortError") {
+          console.error(
+            "Maaf, terjadi kesalahan sistem. Silakan coba lagi!",
+            err
+          );
         }
-        console.error("Maaf, terjadi kesalahan sistem. Silakan coba lagi!");
+      } finally {
+        setLoading(false);
+        abortControllerRef.current = null;
       }
-    } finally {
-      setLoading(false);
-      abortControllerRef.current = null;
-    }
-  };
+    },
+    [
+      phoneOrIP,
+      chatType,
+      config?.credentials?.apiKey,
+      config?.credentials?.username,
+      config?.credentials?.websiteId,
+      config?.theme?.chatWindow?.enableLogin,
+      sessionActive,
+      replyToMessage,
+      cancelSendMessage,
+      updateInteractions,
+      updateInteractionByMessageId,
+      updateAiInteractionByIndex,
+      updateChatType,
+      fetchConversations,
+    ]
+  );
 
   useEffect(() => {
-    if (config?.widgetType !== "website") return;
+    handleSendMessageRef.current = handleSendMessage;
+  }, [handleSendMessage]);
+
+  const resolveClientIdentity = useCallback(async () => {
+    try {
+      const { isError, errorMessage, ip } = await getClientInfo();
+      if (isError) {
+        console.warn("Failed to get client IP, using fallback:", errorMessage);
+        return { name: "", value: "127.0.0.1" };
+      }
+      return { name: "", value: ip! };
+    } catch (err) {
+      console.warn("Error getting client IP, using fallback:", err);
+      return { name: "", value: "127.0.0.1" };
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    const username = config?.credentials?.username;
+    if (!username) return;
+    clearCustomerToken(username);
+    setIsAuthenticated(false);
+    updateInteractions([]);
+    setCurrentResponseMsg("");
+    setSessionExpired(false);
+    const identity = await resolveClientIdentity();
+    setPhoneOrIP(identity);
+  }, [config?.credentials?.username, resolveClientIdentity, updateInteractions]);
+
+  useEffect(() => {
+    if (widgetType !== "chatbot") return;
     if (!chatHistoryId && !config?.credentials?.websiteId) return;
 
     const playNotificationSound = () => {
       try {
-        const audio = new Audio('/sounds/notification.mp3');
+        const audio = new Audio("/sounds/notification.mp3");
         audio.volume = 1;
         audio.play().catch(() => {});
       } catch {
@@ -486,7 +788,10 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
           socket.emit("joinRoom", chatHistoryId);
         }
         if (config?.credentials?.websiteId && phoneOrIP?.value) {
-          socket.emit("joinRoom", `${config.credentials.websiteId}-${phoneOrIP.value}`);
+          socket.emit(
+            "joinRoom",
+            `${config.credentials.websiteId}-${phoneOrIP.value}`
+          );
         }
       }
     });
@@ -525,7 +830,10 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
       const media = payload.media || payload.message?.media || [];
 
-      if ((message && typeof message === "string") || (media && media.length > 0)) {
+      if (
+        (message && typeof message === "string") ||
+        (media && media.length > 0)
+      ) {
         playNotificationSound();
         // Pesan dari socket = dari agent (outgoing/ai)
         addInteraction({
@@ -535,6 +843,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             additional_kwargs: payload.additional_kwargs || {},
             example: false,
             media: media,
+            context_id: payload.message?.reply_to,
+            context: payload.context || payload.message?.context,
           },
           date: new Date(),
           id: data.message_id || payload.message?.id || crypto.randomUUID(),
@@ -566,6 +876,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     const revokeAllBlobs = () => {
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current = [];
+      blobSourcesRef.current.clear();
     };
 
     window.addEventListener("beforeunload", revokeAllBlobs);
@@ -580,7 +891,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
   useEffect(() => {
     if (config?.theme?.chatWindow?.enableGreating ?? false) {
-      const greeted = localStorage.getItem(`cu-greeting-${config?.credentials?.username}`);
+      const greeted = localStorage.getItem(
+        `cu-greeting-${config?.credentials?.username}`
+      );
       setIsFirstTime(!greeted);
     } else {
       setIsFirstTime(false);
@@ -589,28 +902,34 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
   useEffect(() => {
     if (!config) return;
+    if (configErrors && configErrors.length > 0) return;
 
     (async () => {
-      let phoneOrIPState: { name: string, value: string } | null = null;
+      let phoneOrIPState: { name: string; value: string } | null = null;
 
       if (config.theme?.chatWindow.enableLogin) {
         const token = getCustomerToken(config.credentials?.username);
 
         if (token) {
           try {
-            const res = await API("fetch", "customer")(`/v1/customer/get-by-token/${config.credentials?.username}`, {
-              method: "GET",
-              headers: {
-                "x-api-key": config.credentials?.apiKey || '',
-                "Authorization-Customer": `Bearer ${token}`
-              },
-            });
+            const res = await API("fetch", "customer")(
+              `/v1/customer/get-by-token/${config.credentials?.username}`,
+              {
+                method: "GET",
+                headers: {
+                  "x-api-key": config.credentials?.apiKey || "",
+                  "Authorization-Customer": `Bearer ${token}`,
+                },
+              }
+            );
 
             if (!res.ok) {
               if (isUnauthorized(res.status)) {
                 clearCustomerToken(config.credentials?.username);
               }
-              throw new Error(`Failed to get customer data (status ${res.status})`);
+              throw new Error(
+                `Failed to get customer data (status ${res.status})`
+              );
             }
 
             const data = await res.json();
@@ -624,31 +943,30 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             throw error;
           }
         }
-      } else {
-        try {
-          const { isError, errorMessage, ip } = await getClientInfo();
-          if (isError) {
-            console.warn("Failed to get client IP, using fallback:", errorMessage);
-            phoneOrIPState = { name: '', value: "127.0.0.1" };
-          } else {
-            phoneOrIPState = { name: '', value: ip! };
-          }
-        } catch (err) {
-          console.warn("Error getting client IP, using fallback:", err);
-          phoneOrIPState = { name: '', value: "127.0.0.1" };
-        }
       }
+
+      if (!phoneOrIPState) {
+        phoneOrIPState = await resolveClientIdentity();
+      }
+
       setPhoneOrIP(phoneOrIPState);
     })().catch((error) => {
       console.error("ChatWidget initialization failed:", error);
     });
-  }, [config]);
+  }, [config, configErrors, resolveClientIdentity]);
 
   useEffect(() => {
-    if (config?.widgetType === "website" && phoneOrIP?.value && !isFirstTime) {
+    if (widgetType !== "chatbot") return;
+    useInteractionsStore
+      .getState()
+      .loadSession(config?.credentials?.username, config?.credentials?.websiteId);
+  }, [widgetType, config?.credentials?.username, config?.credentials?.websiteId]);
+
+  useEffect(() => {
+    if (widgetType === "chatbot" && phoneOrIP?.value && !isFirstTime) {
       fetchConversations();
     }
-  }, [config?.widgetType, phoneOrIP?.value, isFirstTime]);
+  }, [widgetType, phoneOrIP?.value, isFirstTime, fetchConversations]);
 
   const backgroundButtonColor = isChatVisible
     ? config?.theme?.button?.backgroundColor
@@ -657,6 +975,11 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
   const textButtonColor = isChatVisible
     ? config?.theme?.button?.textColor
     : config?.theme?.button?.backgroundColor || "#0096a2";
+
+  const enableVoice =
+    config?.data?.enable_voice ??
+    config?.theme?.chatWindow?.isActiveCall ??
+    false;
 
   return (
     <AnimatePresence>
@@ -670,16 +993,15 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
           }}
           onClick={handleToggleChatWindow}
         >
-          <img
-            src={config?.theme?.button?.iconSrc || "/icons/favicon.ico"}
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.onerror = null;
-              target.src = "/icons/favicon.ico";
-            }}
-            alt=" "
-            className="mimin:w-4 mimin:h-auto"
-          />
+          {config?.theme?.button?.iconSrc ? (
+            <img
+              src={config.theme.button.iconSrc}
+              alt=" "
+              className="mimin:w-4 mimin:h-auto"
+            />
+          ) : (
+            <MessageCircle className="mimin:w-4 mimin:h-4" />
+          )}
           <span className="mimin:text-sm mimin:font-bold">
             {config?.theme?.button?.tooltip || "Ask Mimin"}
           </span>
@@ -703,7 +1025,9 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             id="mimin-widget-main"
             className="mimin:absolute mimin:bottom-full mimin:mb-4 mimin:right-0"
             initial={{ opacity: 0, y: 20 }}
-            animate={isChatVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
+            animate={
+              isChatVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }
+            }
             transition={{ duration: 0.3, ease: "easeOut" }}
             onAnimationComplete={() => {
               if (!isChatVisible) {
@@ -716,68 +1040,109 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
               style={{
                 width: config?.theme?.chatWindow?.width || "330px",
                 height: config?.theme?.chatWindow?.height || "600px",
-                backgroundColor: config?.theme?.chatWindow?.body?.backgroundColor || "#ffffff",
+                backgroundColor:
+                  config?.theme?.chatWindow?.body?.backgroundColor || "#ffffff",
               }}
             >
-              {(config?.theme?.chatWindow.enableLogin || false) &&
-                !isAuthenticated &&
-                !isFirstTime && (
-                  <AuthWindow
-                    onSuccessLogin={(token, phone) => {
-                      setSessionExpired(false);
-                      setPhoneOrIP({ name: phone.phone, value: phone.value });
-                      setIsAuthenticated(!!token);
-                    }}
-                    sessionExpired={sessionExpired}
-                    token={""}
-                  />
-                )}
-              {(isAuthenticated || !(config?.theme?.chatWindow.enableLogin || false)) &&
-                !isFirstTime && (
-                  <>
-                    <ChatHeader
-                      onToggleCallWindow={handleToggleCallWindow}
-                      onToggleChatWindow={handleToggleChatWindow}
-                    />
-                    <ChatContent
-                      messages={interactions}
-                      currentResponseMsg={currentResponseMsg}
-                      loading={loading}
-                      fetching={fetching}
-                      isWebsite={config?.widgetType === "website"}
-                      sessionActive={sessionActive}
-                    />
-                    <ChatInput
-                      onSendMessage={(message, media) => {
-                        setCurrentResponseMsg("");
-                        message = message.trim().replaceAll(/\n\n+/g, "\n\n");
-                        handleSendMessage(message, media);
-                      }}
-                      loading={loading}
-                      fetching={fetching}
-                      onCancelSendMessage={cancelSendMessage}
-                    />
-                    {voiceAgent === 'openai' ? (
-                      <OpenAiAgentVoiceLayout
-                        isVisible={isCallVisible}
-                        onToggleCallWindow={handleToggleCallWindow}
-                      />
-                    ) : (
-                      <ElevenLabsAgentVoiceLayout
-                        isVisible={isCallVisible}
-                        onToggleCallWindow={handleToggleCallWindow}
-                        phoneOrIP={phoneOrIP}
+              {configErrors && configErrors.length > 0 ? (
+                <ConfigErrorCard errors={configErrors} />
+              ) : widgetType === "voice-ai" ? (
+                <VoiceWidget
+                  config={config}
+                  voiceName={voiceName}
+                  phoneOrIP={phoneOrIP}
+                  isAuthenticated={isAuthenticated}
+                  sessionExpired={sessionExpired}
+                  onSuccessLogin={(token, phone) => {
+                    setSessionExpired(false);
+                    setPhoneOrIP({ name: phone.phone, value: phone.value });
+                    setIsAuthenticated(!!token);
+                  }}
+                  onLogout={handleLogout}
+                />
+              ) : (
+                <React.Fragment>
+                  {(config?.theme?.chatWindow.enableLogin || false) &&
+                    !isAuthenticated &&
+                    !isFirstTime && (
+                      <AuthWindow
+                        onSuccessLogin={(token, phone) => {
+                          setSessionExpired(false);
+                          setPhoneOrIP({
+                            name: phone.phone,
+                            value: phone.value,
+                          });
+                          setIsAuthenticated(!!token);
+                        }}
+                        sessionExpired={sessionExpired}
+                        token={""}
                       />
                     )}
-                  </>
-                )}
-              {isFirstTime && (config?.theme?.chatWindow?.enableGreating || false) && (
-                <StartChatSection
-                  onClickStartChat={() => {
-                    localStorage.setItem(`cu-greeting-${config?.credentials?.username}`, 'true');
-                    setIsFirstTime(false);
-                  }}
-                />
+                  {(isAuthenticated ||
+                    !(config?.theme?.chatWindow.enableLogin || false)) &&
+                    !isFirstTime && (
+                      <>
+                        <ChatHeader
+                          onToggleCallWindow={
+                            enableVoice ? handleToggleCallWindow : undefined
+                          }
+                          onToggleChatWindow={handleToggleChatWindow}
+                          onLogout={
+                            (config?.theme?.chatWindow.enableLogin || false) &&
+                            isAuthenticated
+                              ? handleLogout
+                              : undefined
+                          }
+                        />
+                        <ChatContent
+                          messages={interactions}
+                          currentResponseMsg={currentResponseMsg}
+                          loading={loading}
+                          fetching={fetching}
+                          sessionActive={sessionActive}
+                          onRetryMessage={handleRetryMessage}
+                          onCancelMessage={cancelPendingMessage}
+                          onReplyMessage={setReplyToMessage}
+                        />
+                        <ChatInput
+                          onSendMessage={(message, media, replyToId) => {
+                            setCurrentResponseMsg("");
+                            const cleaned = message
+                              .trim()
+                              .replaceAll(/\n\n+/g, "\n\n");
+                            handleSendMessage(cleaned, media, replyToId);
+                            setReplyToMessage(null);
+                          }}
+                          loading={loading}
+                          fetching={fetching}
+                          onCancelSendMessage={cancelSendMessage}
+                          replyToMessage={replyToMessage}
+                          onCancelReply={() => setReplyToMessage(null)}
+                        />
+                        {phoneOrIP && (
+                          <AgentVoiceLayout
+                            isVisible={isCallVisible}
+                            onToggleCallWindow={handleToggleCallWindow}
+                            phone={phoneOrIP.value}
+                            chatbotAgentId={config?.credentials?.voiceAgentId}
+                            voiceName={voiceName}
+                          />
+                        )}
+                      </>
+                    )}
+                  {isFirstTime &&
+                    (config?.theme?.chatWindow?.enableGreating || false) && (
+                      <StartChatSection
+                        onClickStartChat={() => {
+                          localStorage.setItem(
+                            `cu-greeting-${config?.credentials?.username}`,
+                            "true"
+                          );
+                          setIsFirstTime(false);
+                        }}
+                      />
+                    )}
+                </React.Fragment>
               )}
             </div>
           </motion.div>

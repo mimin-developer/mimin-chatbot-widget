@@ -1,19 +1,38 @@
 import React from "react";
-import type { Interaction } from "../../types";
+import type { Interaction, Message } from "../../types";
 import BubbleChat from "./bubble-chat";
+import { useConfigStore } from "../../hooks/config-store";
+
+interface ReplyTarget {
+  id: string;
+  text: string;
+  sender: string;
+  file_name?: string;
+}
 
 export const ChatContent: React.FC<{
   messages: Interaction[];
   currentResponseMsg: string;
   loading: boolean;
   fetching: boolean;
-  isWebsite?: boolean;
   sessionActive?: boolean;
-}> = ({ messages, currentResponseMsg, loading, fetching, isWebsite, sessionActive }) => {
+  onRetryMessage?: (tempId: string) => void;
+  onCancelMessage?: (tempId: string) => void;
+  onReplyMessage?: (msg: ReplyTarget) => void;
+}> = ({
+  messages,
+  currentResponseMsg,
+  loading,
+  fetching,
+  sessionActive,
+  onRetryMessage,
+  onCancelMessage,
+  onReplyMessage,
+}) => {
   const bottomRef = React.useRef<HTMLDivElement>(null);
+  const { config } = useConfigStore();
 
   React.useEffect(() => {
-    // Scroll to the bottom whenever messages change
     setTimeout(() => {
       bottomRef.current?.scrollIntoView({
         behavior: "smooth",
@@ -21,6 +40,30 @@ export const ChatContent: React.FC<{
       });
     }, 200);
   }, [currentResponseMsg, messages.length]);
+
+  const getMessageContext = (
+    contextId?: string,
+    existingContext?: Message["context"]
+  ) => {
+    if (!contextId) return undefined;
+    if (existingContext && (existingContext.text || existingContext.file)) {
+      return existingContext;
+    }
+    const found = messages.find((m) => m.id === contextId);
+    if (!found) return existingContext;
+
+    const isHuman = !!found.human;
+    const msgObj = found.human || found.ai;
+    if (!msgObj) return existingContext;
+
+    return {
+      id: contextId,
+      direction: isHuman ? ("incoming" as const) : ("outgoing" as const),
+      text: msgObj.content || "",
+      file: msgObj.media?.[0]?.data || "",
+      file_name: msgObj.media?.[0]?.name || "",
+    };
+  };
 
   return (
     <div
@@ -30,25 +73,69 @@ export const ChatContent: React.FC<{
       <div className="mimin:flex mimin:flex-col mimin:gap-9">
         <div className="mimin:flex mimin:flex-col-reverse mimin:gap-9">
           {messages.map((msg, index) => (
-            <div key={index} className="mimin:flex mimin:flex-col mimin:gap-6">
-              {msg.human && (msg.human.content || (msg.human.media && msg.human.media.length > 0)) && (
-                <BubbleChat
-                  message={msg.human.content}
-                  media={msg.human.media}
-                  isUser={true}
-                  date={msg.date}
-                  isError={msg.human.isError}
-                />
-              )}
-              {msg.ai && (msg.ai.content || (msg.ai.media && msg.ai.media.length > 0)) && (
-                <BubbleChat
-                  message={msg.ai.content}
-                  media={msg.ai.media}
-                  isUser={false}
-                  date={msg.date}
-                  isError={msg.ai.isError}
-                />
-              )}
+            <div key={msg.id || index} id={`msg-${msg.id}`} className="mimin:flex mimin:flex-col mimin:gap-6">
+              {msg.human &&
+                (msg.human.content ||
+                  (msg.human.media && msg.human.media.length > 0) ||
+                  msg.human.isUploading) && (
+                  <BubbleChat
+                    message={msg.human.content}
+                    media={msg.human.media}
+                    isUser={true}
+                    date={msg.date}
+                    isError={msg.human.isError}
+                    status={msg.human.status}
+                    isUploading={msg.human.isUploading}
+                    onRetry={
+                      onRetryMessage && msg.human._tempId
+                        ? () => onRetryMessage(msg.human!._tempId!)
+                        : undefined
+                    }
+                    onCancel={
+                      onCancelMessage && msg.human._tempId
+                        ? () => onCancelMessage(msg.human!._tempId!)
+                        : undefined
+                    }
+                    onReply={
+                      onReplyMessage
+                        ? () =>
+                            onReplyMessage({
+                              id: msg.id,
+                              text: msg.human?.content || "",
+                              sender: "You",
+                              file_name: msg.human?.media?.[0]?.name,
+                            })
+                        : undefined
+                    }
+                    context={getMessageContext(msg.human.context_id, msg.human.context)}
+                  />
+                )}
+              {msg.ai &&
+                (msg.ai.content ||
+                  (msg.ai.media && msg.ai.media.length > 0)) && (
+                  <BubbleChat
+                    message={msg.ai.content}
+                    media={msg.ai.media}
+                    isUser={false}
+                    date={msg.date}
+                    isError={msg.ai.isError}
+                    status={msg.ai.status}
+                    isUploading={msg.ai.isUploading}
+                    onReply={
+                      onReplyMessage
+                        ? () =>
+                            onReplyMessage({
+                              id: msg.id,
+                              text: msg.ai?.content || "",
+                              sender:
+                                config?.theme?.chatWindow?.header?.title || "Bot",
+                              file_name: msg.ai?.media?.[0]?.name,
+                            })
+                        : undefined
+                    }
+                    context={getMessageContext(msg.ai.context_id, msg.ai.context)}
+                  />
+                )}
             </div>
           ))}
         </div>
@@ -62,9 +149,6 @@ export const ChatContent: React.FC<{
               date={new Date()}
             />
           )}
-        {loading && !currentResponseMsg && !isWebsite && (
-          <BubbleChat thinking={true} date={new Date()} />
-        )}
         {!sessionActive && !loading && !fetching && (
           <div className="mimin:flex mimin:flex-col mimin:items-center mimin:gap-2 mimin:py-4 mimin:px-3 mimin:bg-amber-50 mimin:border mimin:border-amber-200 mimin:rounded-lg mimin:text-center">
             <svg className="mimin:w-5 mimin:h-5 mimin:text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

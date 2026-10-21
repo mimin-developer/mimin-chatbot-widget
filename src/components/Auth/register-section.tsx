@@ -1,4 +1,4 @@
-import { EyeIcon, EyeOffIcon, LoaderCircle, TriangleAlert } from "lucide-react";
+import { EyeIcon, EyeOffIcon, LoaderCircle, TriangleAlert, Bot, MessagesSquare } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -43,22 +43,49 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   const [activeTab, setActiveTab] = useState<"required" | "optional">("required");
   const { config } = useConfigStore();
 
-  const { requiredFields, optionalFields } = useMemo(() => {
-    if (!Array.isArray(customerFields)) return { requiredFields: [], optionalFields: [] };
+  // Default kedua flag aktif (perilaku lama) jika tidak diset
+  const registerByPhone = config?.theme?.chatWindow?.registerByPhone ?? true;
+  const registerByPassword =
+    config?.theme?.chatWindow?.registerByPassword ?? true;
 
-    const filtered = customerFields.filter(
-      (field) => !excludedFields.includes(field.slug) && !field.is_hidden && field.slug !== 'is_activated'
-    );
+  const processedFields = useMemo(() => {
+    if (!Array.isArray(customerFields)) return [];
+
+    const filtered = customerFields
+      .filter(
+        (field) =>
+          !excludedFields.includes(field.slug) &&
+          field.slug !== "is_activated" &&
+          // Hidden fields excluded, UNLESS required or the password field
+          (!field.is_hidden ||
+            field.is_required ||
+            field.data_type.toLowerCase() === "password") &&
+          (registerByPhone || !field.slug.toLowerCase().includes("phone")) &&
+          (registerByPassword ||
+            field.data_type.toLowerCase() !== "password")
+      )
+      .map((field) =>
+        // Password always mandatory to create an account, regardless of is_required
+        field.data_type.toLowerCase() === "password"
+          ? { ...field, is_required: true }
+          : field
+      );
 
     const nonPasswords = filtered.filter(
-      (f) => f.data_type.toLowerCase() !== "password" && f.slug.toLowerCase() !== "password"
+      (f) => f.data_type.toLowerCase() !== "password"
+    );
+    const passwords = filtered.filter(
+      (f) => f.data_type.toLowerCase() === "password"
     );
 
-    return {
-      requiredFields: nonPasswords.filter((f) => f.is_required),
-      optionalFields: nonPasswords.filter((f) => !f.is_required),
-    };
-  }, [customerFields]);
+    return [...nonPasswords, ...passwords];
+  }, [customerFields, registerByPhone, registerByPassword]);
+
+  const requiredFields = processedFields.filter((f) => f.is_required);
+  const optionalFields = processedFields.filter((f) => !f.is_required);
+  const hasPasswordField = processedFields.some(
+    (f) => f.data_type.toLowerCase() === "password"
+  );
 
   const generateDynamicSchema = (fields: CustomerField[]) => {
     const schemaObject: Record<string, any> = {};
@@ -102,13 +129,37 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
           fieldSchema = z.any();
       }
 
+      if (field.slug.toLowerCase().includes("phone")) {
+        fieldSchema = z.string();
+        if (field.is_required) {
+          fieldSchema = fieldSchema.min(1, `${field.field} is required`);
+        }
+        fieldSchema = fieldSchema.refine(
+          (val: string) => !val || /^\+?[0-9]{6,14}$/.test(val),
+          { message: `${field.field} must be a valid phone number (max 14 digits)` }
+        );
+      }
+
       schemaObject[fieldName] = field.is_required
         ? fieldSchema
         : fieldSchema.optional();
     });
 
-    schemaObject["password"] = z.string().min(6, "Password must be at least 6 characters");
-    schemaObject["confirmPassword"] = z.string().min(1, "Confirm password is required");
+    if (
+      registerByPassword &&
+      !fields.some((f) => f.data_type.toLowerCase() === "password")
+    ) {
+      // Fallback: tidak ada field password dari customer-field
+      schemaObject["password"] = z
+        .string()
+        .min(6, "Password must be at least 6 characters");
+    }
+
+    if (registerByPassword) {
+      schemaObject["confirmPassword"] = z
+        .string()
+        .min(1, "Confirm password is required");
+    }
     schemaObject["acceptTerms"] = z.boolean().refine((val) => val === true, {
       message: "You must accept the terms and conditions",
     });
@@ -122,7 +173,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   };
 
   const form = useForm<Record<string, any>>({
-    resolver: zodResolver(generateDynamicSchema(customerFields)),
+    resolver: zodResolver(generateDynamicSchema(processedFields)),
     defaultValues: {
       acceptTerms: false,
     },
@@ -157,11 +208,8 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   }, [config?.credentials?.username]);
 
   useEffect(() => {
-    if (fetchingFields || !customerFields.length) return;
-    const filtered = customerFields.filter(
-      (field) => !excludedFields.includes(field.slug) && !field.is_hidden && field.slug !== 'is_activated'
-    );
-    filtered.forEach((field) => {
+    if (fetchingFields || !processedFields.length) return;
+    processedFields.forEach((field) => {
       const type = field.data_type.toLowerCase();
       switch (type) {
         case "boolean":
@@ -177,16 +225,22 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
           setValue(field.slug, "");
       }
     });
-  }, [fetchingFields, customerFields]);
+  }, [fetchingFields, processedFields]);
 
   const onSubmit = async (values: Record<string, any>) => {
     setLoading(true);
     setErrorMessage(null);
 
     const processedValues = { ...values };
-    customerFields.forEach((field) => {
+    processedFields.forEach((field) => {
       const normalizedDataType = field.data_type.toLowerCase();
       if (
+        field.slug.toLowerCase().includes("phone") &&
+        typeof processedValues[field.slug] === "string"
+      ) {
+        // Backend mengharapkan nomor tanpa "+" di depan
+        processedValues[field.slug] = processedValues[field.slug].replace(/^\+/, "");
+      } else if (
         normalizedDataType === "boolean" &&
         processedValues[field.slug] !== undefined
       ) {
@@ -301,11 +355,36 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
                   style={{ borderColor: mainColor, outlineColor: mainColor }}
                 />
               );
+            case "password":
+              return (
+                <div className="mimin:relative">
+                  <input
+                    {...register(field.slug)}
+                    type={showPassword ? "text" : "password"}
+                    id={field.slug}
+                    autoComplete="new-password"
+                    placeholder="Min 6 characters"
+                    className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
+                    style={{ borderColor: mainColor, outlineColor: mainColor }}
+                  />
+                  <button
+                    type="button"
+                    className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500 mimin:cursor-pointer"
+                    onClick={() => setShowPassword((e) => !e)}
+                  >
+                    {showPassword ? (
+                      <EyeIcon className="mimin:w-4 mimin:h-4" />
+                    ) : (
+                      <EyeOffIcon className="mimin:w-4 mimin:h-4" />
+                    )}
+                  </button>
+                </div>
+              );
             default:
               return (
                 <input
                   {...register(field.slug)}
-                  type="text"
+                  type={field.slug.toLowerCase().includes("phone") ? "tel" : "text"}
                   id={field.slug}
                   placeholder={field.slug.includes("phone") ? "e.g. 08123456789" : `Enter ${field.field}`}
                   className="mimin:border mimin:rounded-md mimin:p-2 mimin:focus:outline mimin:focus:outline-1"
@@ -332,15 +411,12 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
 
   return (
     <>
-      <div className="mimin:flex mimin:justify-center mimin:items-center mimin:w-full mimin:h-auto">
-        <img
-          src="https://res.cloudinary.com/dctqloe37/image/upload/v1752455653/undraw_chat_qmyo_1_wwzcjj.svg"
-          alt=" "
-          width={1000}
-          height={1000}
-          loading="lazy"
-          className="mimin:w-full mimin:h-auto mimin:object-cover mimin:object-center"
-        />
+      <div
+        className="mimin:flex mimin:justify-center mimin:items-center mimin:gap-3 mimin:w-full mimin:py-6 mimin:rounded-lg"
+        style={{ backgroundColor: `${mainColor}1a` }}
+      >
+        <Bot className="mimin:w-10 mimin:h-10" style={{ color: mainColor }} />
+        <MessagesSquare className="mimin:w-6 mimin:h-6" style={{ color: mainColor }} />
       </div>
       <div className="mimin:mt-10">
         <div className="mimin:space-y-2">
@@ -383,66 +459,70 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
           {activeTab === "required" && requiredFields.map(renderField)}
           {activeTab === "optional" && optionalFields.map(renderField)}
 
-          <div className="mimin:flex mimin:flex-col mimin:gap-1">
-            <label htmlFor="password" className="mimin:text-sm mimin:font-medium">
-              Password <sup className="mimin:text-destructive">*</sup>
-            </label>
-            <div className="mimin:relative">
-              <input
-                {...register("password")}
-                type={showPassword ? "text" : "password"}
-                id="password"
-                placeholder="Min 6 characters"
-                className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
-                style={{ borderColor: mainColor, outlineColor: mainColor }}
-              />
-              <button
-                type="button"
-                className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500"
-                onClick={() => setShowPassword((e) => !e)}
-              >
-                {showPassword ? (
-                  <EyeIcon className="mimin:w-4 mimin:h-4" />
-                ) : (
-                  <EyeOffIcon className="mimin:w-4 mimin:h-4" />
-                )}
-              </button>
+          {registerByPassword && !hasPasswordField && (
+            <div className="mimin:flex mimin:flex-col mimin:gap-1">
+              <label htmlFor="password" className="mimin:text-sm mimin:font-medium">
+                Password <sup className="mimin:text-destructive">*</sup>
+              </label>
+              <div className="mimin:relative">
+                <input
+                  {...register("password")}
+                  type={showPassword ? "text" : "password"}
+                  id="password"
+                  placeholder="Min 6 characters"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
+                  style={{ borderColor: mainColor, outlineColor: mainColor }}
+                />
+                <button
+                  type="button"
+                  className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500 mimin:cursor-pointer"
+                  onClick={() => setShowPassword((e) => !e)}
+                >
+                  {showPassword ? (
+                    <EyeIcon className="mimin:w-4 mimin:h-4" />
+                  ) : (
+                    <EyeOffIcon className="mimin:w-4 mimin:h-4" />
+                  )}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="mimin:text-xs mimin:text-red-500">{errors.password.message as string}</p>
+              )}
             </div>
-            {errors.password && (
-              <p className="mimin:text-xs mimin:text-red-500">{errors.password.message as string}</p>
-            )}
-          </div>
+          )}
 
-          <div className="mimin:flex mimin:flex-col mimin:gap-1">
-            <label htmlFor="confirmPassword" className="mimin:text-sm mimin:font-medium">
-              Confirm Password <sup className="mimin:text-destructive">*</sup>
-            </label>
-            <div className="mimin:relative">
-              <input
-                {...register("confirmPassword")}
-                type={showConfirmPassword ? "text" : "password"}
-                id="confirmPassword"
-                autoComplete="new-password"
-                placeholder="Confirm your password"
-                className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
-                style={{ borderColor: mainColor, outlineColor: mainColor }}
-              />
-              <button
-                type="button"
-                className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500"
-                onClick={() => setShowConfirmPassword((e) => !e)}
-              >
-                {showConfirmPassword ? (
-                  <EyeIcon className="mimin:w-4 mimin:h-4" />
-                ) : (
-                  <EyeOffIcon className="mimin:w-4 mimin:h-4" />
-                )}
-              </button>
+          {registerByPassword && (
+            <div className="mimin:flex mimin:flex-col mimin:gap-1">
+              <label htmlFor="confirmPassword" className="mimin:text-sm mimin:font-medium">
+                Confirm Password <sup className="mimin:text-destructive">*</sup>
+              </label>
+              <div className="mimin:relative">
+                <input
+                  {...register("confirmPassword")}
+                  type={showConfirmPassword ? "text" : "password"}
+                  id="confirmPassword"
+                  autoComplete="new-password"
+                  placeholder="Confirm your password"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
+                  style={{ borderColor: mainColor, outlineColor: mainColor }}
+                />
+                <button
+                  type="button"
+                  className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500 mimin:cursor-pointer"
+                  onClick={() => setShowConfirmPassword((e) => !e)}
+                >
+                  {showConfirmPassword ? (
+                    <EyeIcon className="mimin:w-4 mimin:h-4" />
+                  ) : (
+                    <EyeOffIcon className="mimin:w-4 mimin:h-4" />
+                  )}
+                </button>
+              </div>
+              {errors.confirmPassword && (
+                <p className="mimin:text-xs mimin:text-red-500">{errors.confirmPassword.message as string}</p>
+              )}
             </div>
-            {errors.confirmPassword && (
-              <p className="mimin:text-xs mimin:text-red-500">{errors.confirmPassword.message as string}</p>
-            )}
-          </div>
+          )}
 
           <div className="mimin:flex mimin:items-start mimin:gap-3 mimin:py-2">
             <input

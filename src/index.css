@@ -6,3 +6,41 @@
   --color-secondary: #FFA100;
   --color-destructive: #F26075;
 }
+
+/* ─── Chatbot UI message content styling with CSS variables ─── */
+.chatbot-ui-link {
+  color: var(--chatbot-ui-link-color);
+  text-decoration-line: underline;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.chatbot-ui-code {
+  background: var(--chatbot-ui-code-bg);
+  color: var(--chatbot-ui-code-color);
+  border: 1px solid var(--chatbot-ui-code-border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 500;
+}
+
+.chatbot-ui-code-block {
+  display: block;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  margin: 4px 0;
+  padding: 6px 10px;
+  font-size: 0.85em;
+}
+
+/* ─── Upload progress shimmer for pending outgoing bubbles ─── */
+@keyframes uploading-shimmer {
+  0% {
+    transform: translateX(-150%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}

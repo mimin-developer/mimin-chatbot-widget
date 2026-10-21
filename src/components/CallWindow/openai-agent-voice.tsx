@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { MdPhone } from "react-icons/md";
+import { MdPhone, MdMic, MdMicOff } from "react-icons/md";
 import { motion } from "framer-motion";
 import {
   audioCircleVariants,
@@ -12,41 +12,86 @@ import {
 import { OpenAIAudioVisualizer } from "./openai-audio-visualizer";
 import { useConfigStore } from "../../hooks/config-store";
 import { API, getClientInfo } from "../../services";
-import { blobToBase64, formatAudioCurrentTime, getApiErrorMessage } from "../../utils";
+import {
+  blobToBase64,
+  executeToolCall,
+  formatAudioCurrentTime,
+  getApiErrorMessage,
+} from "../../utils";
+import type { RealtimeSession } from "../../types";
+
+const REALTIME_VOICES = [
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "sage",
+  "shimmer",
+  "verse",
+  "marin",
+  "cedar",
+];
+
+const resolveRealtimeVoice = (voiceName?: string): string | undefined => {
+  if (!voiceName) return undefined;
+  const normalized = voiceName.toLowerCase().trim();
+  return REALTIME_VOICES.includes(normalized) ? normalized : undefined;
+};
 
 interface OpenAiAgentVoiceProps {
   isVisible: boolean;
   onToggleCallWindow: () => void;
+  phone: string;
+  chatbotAgentId?: string;
+  voiceName?: string;
+  session: RealtimeSession;
 }
 
 export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
   isVisible,
   onToggleCallWindow,
+  phone,
+  chatbotAgentId,
+  voiceName,
+  session,
 }) => {
   const [isAnimating, setIsAnimating] = useState(false);
   const [time, setTime] = useState("00:00:00");
   const [callError, setCallError] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(true);
+  const [callFailed, setCallFailed] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [aiMediaStream, setAiMediaStream] = useState<MediaStream | null>(null);
-  const [aiStatus, setAiStatus] = useState<"idle" | "listening" | "speaking">(
+  const [aiStatus, setAiStatus] = useState<"idle" | "listening" | "speaking" | "processing">(
     "idle"
   );
 
-  const { config, signature } = useConfigStore();
+  const { config } = useConfigStore();
+  const apiKey = config?.credentials?.apiKey || "";
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const userMediaRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const toolsRef = useRef<RealtimeSession["tools"]>([]);
+  const isMutedRef = useRef(false);
 
   const startRecording = async () => {
     try {
       const audioContext = new AudioContext();
       const destination = audioContext.createMediaStreamDestination();
-      userMediaRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!userMediaRef.current) {
+        userMediaRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+      userMediaRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = !isMutedRef.current;
+      });
       const userSource = audioContext.createMediaStreamSource(userMediaRef.current);
       userSource.connect(destination);
 
@@ -58,12 +103,12 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
 
       recordingStreamRef.current = destination.stream;
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : 'audio/mp4';
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "audio/mp4";
 
       mediaRecorderRef.current = new MediaRecorder(destination.stream, {
-        mimeType
+        mimeType,
       });
 
       recordedChunksRef.current = [];
@@ -85,16 +130,21 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
       const { isError, ip } = await getClientInfo();
 
       if (!isError) {
-        const response = await API('axios', 'customer')({
-          url: `/v1/call-session/create-draft/${config?.credentials?.username}`,
-          method: 'POST',
-          data: { phone_number: ip },
-          headers: { "x-api-key": config?.credentials?.apiKey }
-        });
-        if (response.data?.session_id._id) setSessionId(response.data.session_id._id);
+        const response = await API("axios", "customer")(
+          `/v1/call-session/create-draft/${config?.credentials?.username}`,
+          {
+            method: "POST",
+            data: {
+              phone_number: phone || ip,
+              ...(chatbotAgentId && { chatbot_agent: chatbotAgentId }),
+            },
+            headers: { "x-api-key": apiKey },
+          }
+        );
+        if (response.data?.session_id?._id) setSessionId(response.data.session_id._id);
       }
     } catch (error) {
-      console.error('Error starting recording:', error);
+      console.error("Error starting recording:", error);
     }
   };
 
@@ -104,61 +154,90 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
       setIsRecording(false);
 
       if (recordingStreamRef.current) {
-        recordingStreamRef.current.getTracks().forEach(track => track.stop());
+        recordingStreamRef.current.getTracks().forEach((track) => track.stop());
       }
 
       if (userMediaRef.current) {
-        userMediaRef.current.getTracks().forEach(track => track.stop());
+        userMediaRef.current.getTracks().forEach((track) => track.stop());
         userMediaRef.current = null;
       }
 
       if (sessionId) {
         mediaRecorderRef.current.onstop = async () => {
-          const mimeType = MediaRecorder.isTypeSupported('audio/webm')
-            ? 'audio/webm'
-            : 'audio/mp4';
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : "audio/mp4";
           const blob = new Blob(recordedChunksRef.current, { type: mimeType });
           setRecordingUrl(URL.createObjectURL(blob));
 
           try {
             const base64 = await blobToBase64(blob);
-            await API('axios', 'customer')({
-              url: `/v1/call-session/update/${config?.credentials?.username}/${sessionId}`,
-              method: 'POST',
-              data: { audio_base64: base64 },
-              headers: { "x-api-key": config?.credentials?.apiKey }
-            });
+            await API("axios", "customer")(
+              `/v1/call-session/update/${config?.credentials?.username}/${sessionId}`,
+              {
+                method: "POST",
+                data: { audio_base64: base64 },
+                headers: { "x-api-key": apiKey },
+              }
+            );
             setSessionId(null);
           } catch (err) {
-            console.error('Failed to upload recording:', err);
+            console.error("Failed to upload recording:", err);
           }
         };
       }
     }
   };
 
+  const toggleMute = () => {
+    const newMuteState = !isMuted;
+    peerConnectionRef.current?.getSenders().forEach((sender) => {
+      if (sender.track?.kind === "audio") {
+        sender.track.enabled = !newMuteState;
+      }
+    });
+    userMediaRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !newMuteState;
+    });
+    isMutedRef.current = newMuteState;
+    setIsMuted(newMuteState);
+  };
+
   useEffect(() => {
     let mediaStream: MediaStream | null = null;
     let peerConnection: RTCPeerConnection | null = null;
+    let active = true;
 
-    if (isVisible) {
+    if (isVisible && session) {
       (async () => {
         try {
           setCallError(null);
+          setCallFailed(false);
+          setIsConnecting(true);
 
-          peerConnection = new RTCPeerConnection();
+          const { model, instructions, tools } = session;
+          toolsRef.current = tools || [];
 
-          const sessionRes = await API("axios", "customer")(
-            `/v1/call-session/create-realtime-session/${config?.credentials?.username}`,
-            {
-              method: "POST",
-              headers: {
-                "x-api-key": config?.credentials?.apiKey
-              }
+          const openAITools = toolsRef.current.map((tool) => ({
+            type: "function",
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          }));
+
+          const realtimeVoice = resolveRealtimeVoice(voiceName);
+
+          peerConnection = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          });
+          peerConnectionRef.current = peerConnection;
+
+          peerConnection.onconnectionstatechange = () => {
+            if (peerConnection?.connectionState === "failed" && active) {
+              setCallFailed(true);
+              setIsConnecting(false);
             }
-          );
-
-          const { client_secret, model, instructions } = sessionRes.data;
+          };
 
           peerConnection.ontrack = (event: RTCTrackEvent) => {
             if (audioRef.current) {
@@ -176,13 +255,14 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
                 type: "session.update",
                 session: {
                   modalities: ["text", "audio"],
-                  tools: [],
+                  tools: openAITools,
+                  ...(realtimeVoice && { voice: realtimeVoice }),
                 },
               })
             );
           };
 
-          dataChannel.addEventListener("message", (event) => {
+          dataChannel.addEventListener("message", async (event) => {
             const message = JSON.parse(event.data);
 
             switch (message.type) {
@@ -195,14 +275,45 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
               case "input_audio_buffer.speech_started":
                 setAiStatus("listening");
                 break;
+              case "response.function_call_arguments.done": {
+                setAiStatus("processing");
+                try {
+                  const toolName: string = message.name;
+                  const toolArgs = JSON.parse(message.arguments || "{}");
+                  const toolResult = await executeToolCall(
+                    toolsRef.current || [],
+                    toolName,
+                    toolArgs
+                  );
+                  if (!active) break;
+                  dataChannel.send(
+                    JSON.stringify({
+                      type: "conversation.item.create",
+                      item: {
+                        type: "function_call_output",
+                        call_id: message.call_id,
+                        output: JSON.stringify(toolResult),
+                      },
+                    })
+                  );
+                  dataChannel.send(JSON.stringify({ type: "response.create" }));
+                } catch (error) {
+                  console.error("Tool call failed:", error);
+                } finally {
+                  if (active) setAiStatus("idle");
+                }
+                break;
+              }
               default:
                 break;
             }
           });
 
           dataChannel.addEventListener("open", async () => {
+            if (!active) return;
+            setIsConnecting(false);
             configureData();
-            startRecording();
+            await startRecording();
 
             const startConversation = {
               type: "response.create",
@@ -214,56 +325,80 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             dataChannel.send(JSON.stringify(startConversation));
           });
 
-          navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-            mediaStream = stream;
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          userMediaRef.current = userMediaRef.current || mediaStream;
+          if (!active) return;
 
-            stream
-              .getTracks()
-              .forEach((track) =>
-                peerConnection!.addTransceiver(track, { direction: "sendrecv" })
-              );
+          mediaStream
+            .getTracks()
+            .forEach((track) =>
+              peerConnection!.addTransceiver(track, { direction: "sendrecv" })
+            );
 
-            peerConnection!.createOffer().then((offer) => {
-              peerConnection!.setLocalDescription(offer);
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          if (!active) return;
 
-              API("fetch", "openai")(`/realtime?model=${model}`, {
-                method: "POST",
-                body: offer.sdp,
-                headers: {
-                  Authorization: `Bearer ${client_secret.value}`,
-                  "Content-Type": "application/sdp",
-                },
-                // @ts-expect-error: fetch support duplex property
-                duplex: "half",
-              })
-                .then((r) => r.text())
-                .then((sdp) => {
-                  peerConnection!.setRemoteDescription({
-                    sdp,
-                    type: "answer",
-                  });
-                })
-                .catch((err) => console.error(err));
-            });
+          const sdpUrl = `/v1/internal/openai-realtime/${config?.credentials?.username}?model=${model}${
+            chatbotAgentId ? `&chatbot_agent=${chatbotAgentId}` : ""
+          }`;
+
+          const sdpRes = await API("fetch", "customer")(sdpUrl, {
+            method: "POST",
+            body: offer.sdp,
+            headers: {
+              "Content-Type": "application/sdp",
+              "x-api-key": apiKey,
+            },
+            // @ts-expect-error: fetch support duplex property
+            duplex: "half",
+          });
+
+          if (!sdpRes.ok) {
+            const body = await sdpRes.text().catch(() => "");
+            throw new Error(body || "SDP exchange failed");
+          }
+
+          const sdp = await sdpRes.text();
+          if (!active) return;
+
+          await peerConnection.setRemoteDescription({
+            sdp,
+            type: "answer",
           });
         } catch (error) {
-          console.error("Failed to create realtime session:", error);
-          setCallError(getApiErrorMessage(error, "Gagal membuat sesi realtime"));
+          if (!active) return;
+          console.error("Failed to start realtime call:", error);
+          setCallError(getApiErrorMessage(error, ""));
+          setCallFailed(true);
+          setIsConnecting(false);
         }
       })();
-
-      return () => {
-        if (mediaStream) {
-          mediaStream.getTracks().forEach((track) => track.stop());
-        }
-
-        if (peerConnection) {
-          peerConnection.getSenders().forEach((sender) => sender.track?.stop());
-          peerConnection.close();
-        }
-      };
     }
-  }, [isVisible]);
+
+    return () => {
+      active = false;
+
+      if (peerConnectionRef.current === peerConnection) {
+        peerConnectionRef.current = null;
+      }
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+      }
+
+      if (userMediaRef.current) {
+        userMediaRef.current.getTracks().forEach((track) => track.stop());
+        userMediaRef.current = null;
+      }
+
+      if (peerConnection) {
+        peerConnection.getSenders().forEach((sender) => sender.track?.stop());
+        peerConnection.close();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible, session]);
 
   useEffect(() => {
     return () => {
@@ -273,7 +408,6 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
     };
   }, [recordingUrl]);
 
-  // Animasi untuk tombol hang up
   const handleHangUp = () => {
     setIsAnimating(true);
     setTimeout(() => {
@@ -285,6 +419,11 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
       }
 
       setAiMediaStream(null);
+      setAiStatus("idle");
+      setIsMuted(false);
+      isMutedRef.current = false;
+      setIsConnecting(true);
+      setCallFailed(false);
       setCallError(null);
       onToggleCallWindow();
       setIsAnimating(false);
@@ -296,7 +435,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
   return (
     <motion.div
       className="mimin:absolute mimin:inset-0 mimin:bg-white mimin:z-10"
-      initial="hidden"
+      initial={false}
       animate="visible"
       exit="exit"
       // @ts-ignore
@@ -311,7 +450,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             initial="initial"
             animate="animate"
           >
-            {callError ? "CALL FAILED" : "IN CALL"}
+            {callFailed ? "CALL FAILED" : isConnecting ? "CONNECTING..." : "IN CALL"}
           </motion.h4>
 
           {/* Lingkaran audio dengan animasi berlapis */}
@@ -354,7 +493,7 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             <div className="mimin:absolute mimin:inset-0 mimin:flex mimin:justify-center mimin:items-center">
               <OpenAIAudioVisualizer
                 audioStream={aiMediaStream}
-                isActive={isVisible}
+                isActive={isVisible && !isConnecting && !callFailed}
               />
             </div>
             {!!aiMediaStream && (
@@ -364,13 +503,13 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             )}
           </div>
 
-          {callError && (
+          {callFailed && (
             <motion.p
               className="mimin:mt-4 mimin:px-3 mimin:py-2 mimin:rounded-lg mimin:bg-red-50 mimin:text-red-600 mimin:text-xs mimin:text-center mimin:max-w-[280px] mimin:break-words"
               // @ts-ignore
               variants={childVariants}
             >
-              {callError}
+              {callError || "Gagal terhubung. Silakan tutup dan coba lagi."}
             </motion.p>
           )}
 
@@ -416,36 +555,60 @@ export const OpenAiAgentVoiceLayout: React.FC<OpenAiAgentVoiceProps> = ({
             }}
           />
 
-          {/* Tombol hang up dengan animasi interaktif */}
+          {/* Tombol mute dan hang up dengan animasi interaktif */}
           <motion.div
-            className="mimin:grid mimin:grid-cols-2 mimin:gap-4 mimin:w-full"
+            className="mimin:flex mimin:items-center mimin:justify-center mimin:gap-8 mimin:w-full"
             // @ts-ignore
             variants={childVariants}
           >
-            <div className="mimin:col-span-2 mimin:flex mimin:items-center mimin:justify-center">
-              <motion.button
-                type="button"
-                className="mimin:cursor-pointer mimin:bg-gradient-to-br mimin:from-[#0096a2]/30 mimin:to-[#f26075]/30 mimin:rounded-full mimin:w-[60px] mimin:h-[60px] mimin:p-4 mimin:aspect-square mimin:flex mimin:items-center mimin:justify-center"
-                // @ts-ignore
-                variants={hangUpButtonVariants}
-                initial="initial"
-                whileHover="hover"
-                whileTap="tap"
-                onClick={handleHangUp}
-                disabled={isAnimating}
-                animate={
-                  isAnimating
-                    ? {
-                      scale: [1, 1.2, 0.8],
-                      rotate: [0, 180, 360],
-                      transition: { duration: 0.3 },
-                    }
-                    : {}
-                }
-              >
-                <MdPhone className="mimin:w-full mimin:h-full mimin:text-[#f26075]/90 mimin:rotate-90" />
-              </motion.button>
-            </div>
+            <motion.button
+              type="button"
+              aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
+              className={`mimin:rounded-full mimin:w-[60px] mimin:h-[60px] mimin:p-4 mimin:flex mimin:items-center mimin:justify-center mimin:transition-colors ${
+                isMuted
+                  ? "mimin:bg-[#f26075] mimin:text-white"
+                  : isConnecting
+                    ? "mimin:bg-gray-100 mimin:text-gray-300 mimin:cursor-not-allowed"
+                    : "mimin:bg-gray-100 mimin:text-[#0096a2] mimin:cursor-pointer"
+              }`}
+              // @ts-ignore
+              variants={hangUpButtonVariants}
+              initial="initial"
+              whileHover="hover"
+              whileTap="tap"
+              onClick={toggleMute}
+              disabled={isAnimating || isConnecting}
+            >
+              {isMuted ? <MdMicOff className="mimin:w-full mimin:h-full" /> : <MdMic className="mimin:w-full mimin:h-full" />}
+            </motion.button>
+
+            <motion.button
+              type="button"
+              aria-label="End call"
+              className={`mimin:rounded-full mimin:w-[60px] mimin:h-[60px] mimin:p-4 mimin:aspect-square mimin:flex mimin:items-center mimin:justify-center mimin:transition-opacity ${
+                isConnecting
+                  ? "mimin:bg-gradient-to-br mimin:from-[#0096a2]/10 mimin:to-[#f26075]/10 mimin:cursor-not-allowed mimin:opacity-50"
+                  : "mimin:bg-gradient-to-br mimin:from-[#0096a2]/30 mimin:to-[#f26075]/30 mimin:cursor-pointer"
+              }`}
+              // @ts-ignore
+              variants={hangUpButtonVariants}
+              initial="initial"
+              whileHover="hover"
+              whileTap="tap"
+              onClick={handleHangUp}
+              disabled={isAnimating || isConnecting}
+              animate={
+                isAnimating
+                  ? {
+                    scale: [1, 1.2, 0.8],
+                    rotate: [0, 180, 360],
+                    transition: { duration: 0.3 },
+                  }
+                  : {}
+              }
+            >
+              <MdPhone className="mimin:w-full mimin:h-full mimin:text-[#f26075]/90 mimin:rotate-90" />
+            </motion.button>
           </motion.div>
 
           {/* Ripple effect untuk background */}

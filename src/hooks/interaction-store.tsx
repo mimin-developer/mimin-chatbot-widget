@@ -17,7 +17,7 @@ interface InteractionsStoreState {
   clearInteractions: () => void;
   updateAiInteractionByIndex: (idx: number, message: Message) => void;
   setChatType: (chatType: string | null) => void;
-  loadSession: (username?: string, websiteId?: string, widgetType?: string) => void;
+  loadSession: (username?: string, websiteId?: string) => void;
 }
 
 export const useInteractionsStore = create<InteractionsStoreState>()(
@@ -28,15 +28,8 @@ export const useInteractionsStore = create<InteractionsStoreState>()(
       histories: {},
       activeKey: null,
 
-      loadSession: (username, websiteId, widgetType) => {
-        const isWebsite = widgetType === "website";
-        let key = "default";
-        
-        if (isWebsite) {
-          key = `website_${username || "default"}_${websiteId || "default"}`;
-        } else if (username) {
-          key = `chatbot_${username}`;
-        }
+      loadSession: (username, websiteId) => {
+        const key = `chat_${username || "default"}_${websiteId || "default"}`;
 
         set((state) => {
           const histories = state.histories || {};
