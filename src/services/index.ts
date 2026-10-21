@@ -1,9 +1,10 @@
 import axios, { type AxiosInstance } from "axios";
 import { ENV } from "../config/environment";
+import type { RealtimeSession, VoiceProvider } from "../types";
 
 import { useConfigStore } from "../hooks/config-store";
 
-type typeAPIURL = 'customer' | 'chatbot' | 'openai';
+type typeAPIURL = 'customer' | 'openai';
 export function API(type: 'axios', typeAPI: typeAPIURL): AxiosInstance;
 export function API(type: 'fetch', typeAPI: typeAPIURL): (url: string, options?: RequestInit) => Promise<Response>;
 
@@ -13,7 +14,6 @@ export function API(
 ) {
   const config = useConfigStore.getState().config;
   const customerAPI = config?.credentials?.apiUrl || ENV.NEXT_PUBLIC_CUSTOMER_API;
-  const chatbotAPI = ENV.NEXT_PUBLIC_CHATBOT_URL;
   const openaiAPI = ENV.NEXT_PUBLIC_OPENAI_URL;
 
   const version = typeAPI === 'openai' ? 'v1' : 'api';
@@ -21,9 +21,7 @@ export function API(
   const baseURL =
     typeAPI === 'customer'
       ? `${customerAPI}/${version}`
-      : typeAPI === 'chatbot'
-        ? `${chatbotAPI}/${version}`
-        : `${openaiAPI}/${version}`; // openai
+      : `${openaiAPI}/${version}`; // openai
 
   if (type === 'axios') {
     return axios.create({
@@ -47,6 +45,49 @@ export function API(
     });
   };
 }
+
+interface RealtimeSessionData {
+  provider?: string;
+  model?: string;
+  instructions?: string;
+  tools?: RealtimeSession["tools"];
+  client_secret?: { value: string };
+  ephemeral_token?: string;
+}
+
+export const createRealtimeSession = async ({
+  username,
+  phone,
+  chatbotAgentId,
+}: {
+  username?: string;
+  phone: string;
+  chatbotAgentId?: string;
+}): Promise<RealtimeSession> => {
+  const apiKey = useConfigStore.getState().config?.credentials?.apiKey || "";
+
+  const response = await API("axios", "customer")(
+    `/v1/call-session/create-realtime-session/${username}`,
+    {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+      data: {
+        additional_data: { phone },
+        ...(chatbotAgentId && { chatbot_agent: chatbotAgentId }),
+      },
+    }
+  );
+
+  const data: RealtimeSessionData = response.data || {};
+
+  return {
+    ...data,
+    provider:
+      data.provider?.toLowerCase() === "gemini"
+        ? ("gemini" as VoiceProvider)
+        : ("openai" as VoiceProvider),
+  };
+};
 
 export const getClientInfo = async () => {
   try {

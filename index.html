@@ -16,66 +16,21 @@
     <script type="module">
       import { Chatbot } from '/src/index.tsx'
 
+      // Theme is loaded remotely, mirroring chatbot-ui flow:
+      // GET /v1/api-credential/get/{username}/{api_credential_id} —
+      // the embed only needs the minimal credentials below.
       Chatbot.init({
-        widgetType: "website",
+        widgetType: "chatbot", // "chatbot" | "voice-ai"
         credentials: {
           apiKey: import.meta.env.VITE_API_KEY || "YOUR_API_KEY",
           username: import.meta.env.VITE_USERNAME || "YOUR_USERNAME",
           websiteId: import.meta.env.VITE_WEBSITE_ID || "YOUR_WEBSITE_ID",
-          apiUrl: import.meta.env.VITE_API_URL || "YOUR_API_URL",
-        },
-        baseUrl: import.meta.env.VITE_BASE_URL || "YOUR_BASE_URL",
-        theme: {
-          button: {
-            backgroundColor: "#0093a3",
-            textColor: "#FFFFFF",
-            iconSrc: "https://appstaging.mimin.io/favicon.ico",
-            tooltip: "Ayooo",
-          },
-          chatWindow: {
-            isActiveCall: false,
-
-            enableMediaUpload: true,
-            enableLogin: true,
-            enableRegister: true,
-            loginByPhone: true,
-            loginByPassword: true,
-            registerByPhone: true,
-            registerByPassword: true,
-            header: {
-              backgroundColor: "#0093a3",
-              color: "#FFFFFF",
-              title: "Ayooo",
-              description: "Mimin Disini",
-              avatarSrc: "https://mimin-images.s3.ap-southeast-1.amazonaws.com/akuntestomnichat/api-credential/widget_avatar_chatbot-52378ff9-0c44-4836-9d39-a679517cec79.png",
-              closeColorButton: "#ffffff",
-              voiceAIColorButton: "#ffffff",
-              refreshColorButton: "#ffffff",
-            },
-            botMessage: {
-              backgroundColor: "#0093a3",
-              borderColor: "#ffffff",
-              textColor: "#ffffff",
-            },
-            userMessage: {
-              backgroundColor: "#0093a3",
-              borderColor: "#FFFFFF",
-              textColor: "#FFFFFF",
-            },
-            greating: {
-              title: "Hello Kamu! 👋",
-              description: "Mari mulai sesi percakapan kita!",
-              avatar: "https://mimin-images.s3.ap-southeast-1.amazonaws.com/akuntestomnichat/api-credential/widget_greeting_avatar-7a547c95-094f-43fe-b21a-9a34399f06c4.svg_xml",
-              color: "#0093a3",
-            },
-            textInput: {
-              placeholder: "Enter your message here...",
-              backgroundColor: "#0093a3",
-              sendButtonColor: "#0093a3",
-              footerText: "Powered by Mimin",
-              footerTextColor: "#ffffff",
-            }
-          },
+          apiUrl: import.meta.env.VITE_API_URL || undefined,
+          // widgetType "chatbot" requires chatbotAgentId:
+          chatbotAgentId: import.meta.env.VITE_CHATBOT_AGENT_ID || undefined,
+          // widgetType "voice-ai" may omit voiceAgentId when the credential
+          // has widget_voice_ai_agent_id set; otherwise:
+          voiceAgentId: import.meta.env.VITE_VOICE_AGENT_ID || "YOUR_VOICE_AGENT_ID",
         },
       });
     </script>

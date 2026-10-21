@@ -1,4 +1,4 @@
-import { EyeIcon, EyeOffIcon, LoaderCircle, TriangleAlert } from "lucide-react";
+import { EyeIcon, EyeOffIcon, LoaderCircle, TriangleAlert, Bot, MessagesSquare } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -43,22 +43,49 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   const [activeTab, setActiveTab] = useState<"required" | "optional">("required");
   const { config } = useConfigStore();
 
-  const { requiredFields, optionalFields } = useMemo(() => {
-    if (!Array.isArray(customerFields)) return { requiredFields: [], optionalFields: [] };
+  // Default kedua flag aktif (perilaku lama) jika tidak diset
+  const registerByPhone = config?.theme?.chatWindow?.registerByPhone ?? true;
+  const registerByPassword =
+    config?.theme?.chatWindow?.registerByPassword ?? true;
 
-    const filtered = customerFields.filter(
-      (field) => !excludedFields.includes(field.slug) && !field.is_hidden && field.slug !== 'is_activated'
-    );
+  const processedFields = useMemo(() => {
+    if (!Array.isArray(customerFields)) return [];
+
+    const filtered = customerFields
+      .filter(
+        (field) =>
+          !excludedFields.includes(field.slug) &&
+          field.slug !== "is_activated" &&
+          // Hidden fields excluded, UNLESS required or the password field
+          (!field.is_hidden ||
+            field.is_required ||
+            field.data_type.toLowerCase() === "password") &&
+          (registerByPhone || !field.slug.toLowerCase().includes("phone")) &&
+          (registerByPassword ||
+            field.data_type.toLowerCase() !== "password")
+      )
+      .map((field) =>
+        // Password always mandatory to create an account, regardless of is_required
+        field.data_type.toLowerCase() === "password"
+          ? { ...field, is_required: true }
+          : field
+      );
 
     const nonPasswords = filtered.filter(
-      (f) => f.data_type.toLowerCase() !== "password" && f.slug.toLowerCase() !== "password"
+      (f) => f.data_type.toLowerCase() !== "password"
+    );
+    const passwords = filtered.filter(
+      (f) => f.data_type.toLowerCase() === "password"
     );
 
-    return {
-      requiredFields: nonPasswords.filter((f) => f.is_required),
-      optionalFields: nonPasswords.filter((f) => !f.is_required),
-    };
-  }, [customerFields]);
+    return [...nonPasswords, ...passwords];
+  }, [customerFields, registerByPhone, registerByPassword]);
+
+  const requiredFields = processedFields.filter((f) => f.is_required);
+  const optionalFields = processedFields.filter((f) => !f.is_required);
+  const hasPasswordField = processedFields.some(
+    (f) => f.data_type.toLowerCase() === "password"
+  );
 
   const generateDynamicSchema = (fields: CustomerField[]) => {
     const schemaObject: Record<string, any> = {};
@@ -102,13 +129,37 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
           fieldSchema = z.any();
       }
 
+      if (field.slug.toLowerCase().includes("phone")) {
+        fieldSchema = z.string();
+        if (field.is_required) {
+          fieldSchema = fieldSchema.min(1, `${field.field} is required`);
+        }
+        fieldSchema = fieldSchema.refine(
+          (val: string) => !val || /^\+?[0-9]{6,14}$/.test(val),
+          { message: `${field.field} must be a valid phone number (max 14 digits)` }
+        );
+      }
+
       schemaObject[fieldName] = field.is_required
         ? fieldSchema
         : fieldSchema.optional();
     });
 
-    schemaObject["password"] = z.string().min(6, "Password must be at least 6 characters");
-    schemaObject["confirmPassword"] = z.string().min(1, "Confirm password is required");
+    if (
+      registerByPassword &&
+      !fields.some((f) => f.data_type.toLowerCase() === "password")
+    ) {
+      // Fallback: tidak ada field password dari customer-field
+      schemaObject["password"] = z
+        .string()
+        .min(6, "Password must be at least 6 characters");
+    }
+
+    if (registerByPassword) {
+      schemaObject["confirmPassword"] = z
+        .string()
+        .min(1, "Confirm password is required");
+    }
     schemaObject["acceptTerms"] = z.boolean().refine((val) => val === true, {
       message: "You must accept the terms and conditions",
     });
@@ -122,7 +173,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   };
 
   const form = useForm<Record<string, any>>({
-    resolver: zodResolver(generateDynamicSchema(customerFields)),
+    resolver: zodResolver(generateDynamicSchema(processedFields)),
     defaultValues: {
       acceptTerms: false,
     },
@@ -157,11 +208,8 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   }, [config?.credentials?.username]);
 
   useEffect(() => {
-    if (fetchingFields || !customerFields.length) return;
-    const filtered = customerFields.filter(
-      (field) => !excludedFields.includes(field.slug) && !field.is_hidden && field.slug !== 'is_activated'
-    );
-    filtered.forEach((field) => {
+    if (fetchingFields || !processedFields.length) return;
+    processedFields.forEach((field) => {
       const type = field.data_type.toLowerCase();
       switch (type) {
         case "boolean":
@@ -177,16 +225,22 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
           setValue(field.slug, "");
       }
     });
-  }, [fetchingFields, customerFields]);
+  }, [fetchingFields, processedFields]);
 
   const onSubmit = async (values: Record<string, any>) => {
     setLoading(true);
     setErrorMessage(null);
 
     const processedValues = { ...values };
-    customerFields.forEach((field) => {
+    processedFields.forEach((field) => {
       const normalizedDataType = field.data_type.toLowerCase();
       if (
+        field.slug.toLowerCase().includes("phone") &&
+        typeof processedValues[field.slug] === "string"
+      ) {
+        // Backend mengharapkan nomor tanpa "+" di depan
+        processedValues[field.slug] = processedValues[field.slug].replace(/^\+/, "");
+      } else if (
         normalizedDataType === "boolean" &&
         processedValues[field.slug] !== undefined
       ) {
@@ -250,10 +304,10 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
   const renderField = (field: CustomerField) => {
     const type = field.data_type.toLowerCase();
     return (
-      <div key={field._id} className="mimin-flex mimin-flex-col mimin-gap-1">
-        <label htmlFor={field.slug} className="mimin-text-sm mimin-font-medium">
+      <div key={field._id} className="mimin:flex mimin:flex-col mimin:gap-1">
+        <label htmlFor={field.slug} className="mimin:text-sm mimin:font-medium">
           {field.field}
-          {field.is_required && <sup className="mimin-text-destructive">*</sup>}
+          {field.is_required && <sup className="mimin:text-destructive">*</sup>}
         </label>
         {(() => {
           switch (type) {
@@ -262,7 +316,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
                 <select
                   {...register(field.slug)}
                   id={field.slug}
-                  className="mimin-border mimin-rounded-md mimin-p-2 mimin-focus:outline mimin-focus:outline-1 mimin-bg-white"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:focus:outline mimin:focus:outline-1 mimin:bg-white"
                   style={{ borderColor: mainColor, outlineColor: mainColor }}
                 >
                   <option value="true">Yes</option>
@@ -275,7 +329,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
                   {...register(field.slug)}
                   type="date"
                   id={field.slug}
-                  className="mimin-border mimin-rounded-md mimin-p-2 mimin-focus:outline mimin-focus:outline-1 mimin-bg-white"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:focus:outline mimin:focus:outline-1 mimin:bg-white"
                   style={{ borderColor: mainColor, outlineColor: mainColor }}
                 />
               );
@@ -297,25 +351,50 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
                   type="number"
                   id={field.slug}
                   placeholder={`Enter ${field.field}`}
-                  className="mimin-border mimin-rounded-md mimin-p-2 mimin-focus:outline mimin-focus:outline-1"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:focus:outline mimin:focus:outline-1"
                   style={{ borderColor: mainColor, outlineColor: mainColor }}
                 />
+              );
+            case "password":
+              return (
+                <div className="mimin:relative">
+                  <input
+                    {...register(field.slug)}
+                    type={showPassword ? "text" : "password"}
+                    id={field.slug}
+                    autoComplete="new-password"
+                    placeholder="Min 6 characters"
+                    className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
+                    style={{ borderColor: mainColor, outlineColor: mainColor }}
+                  />
+                  <button
+                    type="button"
+                    className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500 mimin:cursor-pointer"
+                    onClick={() => setShowPassword((e) => !e)}
+                  >
+                    {showPassword ? (
+                      <EyeIcon className="mimin:w-4 mimin:h-4" />
+                    ) : (
+                      <EyeOffIcon className="mimin:w-4 mimin:h-4" />
+                    )}
+                  </button>
+                </div>
               );
             default:
               return (
                 <input
                   {...register(field.slug)}
-                  type="text"
+                  type={field.slug.toLowerCase().includes("phone") ? "tel" : "text"}
                   id={field.slug}
                   placeholder={field.slug.includes("phone") ? "e.g. 08123456789" : `Enter ${field.field}`}
-                  className="mimin-border mimin-rounded-md mimin-p-2 mimin-focus:outline mimin-focus:outline-1"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:focus:outline mimin:focus:outline-1"
                   style={{ borderColor: mainColor, outlineColor: mainColor }}
                 />
               );
           }
         })()}
         {errors[field.slug] && (
-          <p className="mimin-text-xs mimin-text-red-500">{errors[field.slug]?.message as string}</p>
+          <p className="mimin:text-xs mimin:text-red-500">{errors[field.slug]?.message as string}</p>
         )}
       </div>
     );
@@ -323,39 +402,36 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
 
   if (fetchingFields) {
     return (
-      <div className="mimin-flex mimin-flex-col mimin-items-center mimin-justify-center mimin-p-10 mimin-gap-3">
-        <LoaderCircle className="mimin-w-8 mimin-h-8 mimin-animate-spin" style={{ color: mainColor }} />
-        <p className="mimin-text-gray-500 mimin-text-sm">Loading registration form...</p>
+      <div className="mimin:flex mimin:flex-col mimin:items-center mimin:justify-center mimin:p-10 mimin:gap-3">
+        <LoaderCircle className="mimin:w-8 mimin:h-8 mimin:animate-spin" style={{ color: mainColor }} />
+        <p className="mimin:text-gray-500 mimin:text-sm">Loading registration form...</p>
       </div>
     );
   }
 
   return (
     <>
-      <div className="mimin-flex mimin-justify-center mimin-items-center mimin-w-full mimin-h-auto">
-        <img
-          src="https://res.cloudinary.com/dctqloe37/image/upload/v1752455653/undraw_chat_qmyo_1_wwzcjj.svg"
-          alt=" "
-          width={1000}
-          height={1000}
-          loading="lazy"
-          className="mimin-w-full mimin-h-auto mimin-object-cover mimin-object-center"
-        />
+      <div
+        className="mimin:flex mimin:justify-center mimin:items-center mimin:gap-3 mimin:w-full mimin:py-6 mimin:rounded-lg"
+        style={{ backgroundColor: `${mainColor}1a` }}
+      >
+        <Bot className="mimin:w-10 mimin:h-10" style={{ color: mainColor }} />
+        <MessagesSquare className="mimin:w-6 mimin:h-6" style={{ color: mainColor }} />
       </div>
-      <div className="mimin-mt-10">
-        <div className="mimin-space-y-2">
-          <h2 className="mimin-text-base mimin-font-bold">Create Account</h2>
-          <p className="mimin-text-sm mimin-text-gray-500">
+      <div className="mimin:mt-10">
+        <div className="mimin:space-y-2">
+          <h2 className="mimin:text-base mimin:font-bold">Create Account</h2>
+          <p className="mimin:text-sm mimin:text-gray-500">
             Fill your information below to create your account
           </p>
         </div>
 
         {optionalFields.length > 0 && (
-          <div className="mimin-flex mimin-gap-2 mimin-mt-4 mimin-mb-2">
+          <div className="mimin:flex mimin:gap-2 mimin:mt-4 mimin:mb-2">
             <button
               type="button"
               onClick={() => setActiveTab("required")}
-              className="mimin-px-3 mimin-py-1.5 mimin-text-sm mimin-rounded-md mimin-transition"
+              className="mimin:px-3 mimin:py-1.5 mimin:text-sm mimin:rounded-md mimin:transition"
               style={{
                 backgroundColor: activeTab === "required" ? mainColor : "transparent",
                 color: activeTab === "required" ? "white" : mainColor,
@@ -367,7 +443,7 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
             <button
               type="button"
               onClick={() => setActiveTab("optional")}
-              className="mimin-px-3 mimin-py-1.5 mimin-text-sm mimin-rounded-md mimin-transition"
+              className="mimin:px-3 mimin:py-1.5 mimin:text-sm mimin:rounded-md mimin:transition"
               style={{
                 backgroundColor: activeTab === "optional" ? mainColor : "transparent",
                 color: activeTab === "optional" ? "white" : mainColor,
@@ -379,113 +455,117 @@ const RegisterSection = ({ onClickSignin }: IProps) => {
           </div>
         )}
 
-        <form onSubmit={handleSubmit(onSubmit)} className="mimin-space-y-2 mimin-mt-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="mimin:space-y-2 mimin:mt-4">
           {activeTab === "required" && requiredFields.map(renderField)}
           {activeTab === "optional" && optionalFields.map(renderField)}
 
-          <div className="mimin-flex mimin-flex-col mimin-gap-1">
-            <label htmlFor="password" className="mimin-text-sm mimin-font-medium">
-              Password <sup className="mimin-text-destructive">*</sup>
-            </label>
-            <div className="mimin-relative">
-              <input
-                {...register("password")}
-                type={showPassword ? "text" : "password"}
-                id="password"
-                placeholder="Min 6 characters"
-                className="mimin-border mimin-rounded-md mimin-p-2 mimin-w-full mimin-focus:outline mimin-focus:outline-1"
-                style={{ borderColor: mainColor, outlineColor: mainColor }}
-              />
-              <button
-                type="button"
-                className="mimin-absolute mimin-right-2.5 mimin-top-1/2 -mimin-translate-y-1/2 mimin-text-gray-500"
-                onClick={() => setShowPassword((e) => !e)}
-              >
-                {showPassword ? (
-                  <EyeIcon className="mimin-w-4 mimin-h-4" />
-                ) : (
-                  <EyeOffIcon className="mimin-w-4 mimin-h-4" />
-                )}
-              </button>
+          {registerByPassword && !hasPasswordField && (
+            <div className="mimin:flex mimin:flex-col mimin:gap-1">
+              <label htmlFor="password" className="mimin:text-sm mimin:font-medium">
+                Password <sup className="mimin:text-destructive">*</sup>
+              </label>
+              <div className="mimin:relative">
+                <input
+                  {...register("password")}
+                  type={showPassword ? "text" : "password"}
+                  id="password"
+                  placeholder="Min 6 characters"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
+                  style={{ borderColor: mainColor, outlineColor: mainColor }}
+                />
+                <button
+                  type="button"
+                  className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500 mimin:cursor-pointer"
+                  onClick={() => setShowPassword((e) => !e)}
+                >
+                  {showPassword ? (
+                    <EyeIcon className="mimin:w-4 mimin:h-4" />
+                  ) : (
+                    <EyeOffIcon className="mimin:w-4 mimin:h-4" />
+                  )}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="mimin:text-xs mimin:text-red-500">{errors.password.message as string}</p>
+              )}
             </div>
-            {errors.password && (
-              <p className="mimin-text-xs mimin-text-red-500">{errors.password.message as string}</p>
-            )}
-          </div>
+          )}
 
-          <div className="mimin-flex mimin-flex-col mimin-gap-1">
-            <label htmlFor="confirmPassword" className="mimin-text-sm mimin-font-medium">
-              Confirm Password <sup className="mimin-text-destructive">*</sup>
-            </label>
-            <div className="mimin-relative">
-              <input
-                {...register("confirmPassword")}
-                type={showConfirmPassword ? "text" : "password"}
-                id="confirmPassword"
-                autoComplete="new-password"
-                placeholder="Confirm your password"
-                className="mimin-border mimin-rounded-md mimin-p-2 mimin-w-full mimin-focus:outline mimin-focus:outline-1"
-                style={{ borderColor: mainColor, outlineColor: mainColor }}
-              />
-              <button
-                type="button"
-                className="mimin-absolute mimin-right-2.5 mimin-top-1/2 -mimin-translate-y-1/2 mimin-text-gray-500"
-                onClick={() => setShowConfirmPassword((e) => !e)}
-              >
-                {showConfirmPassword ? (
-                  <EyeIcon className="mimin-w-4 mimin-h-4" />
-                ) : (
-                  <EyeOffIcon className="mimin-w-4 mimin-h-4" />
-                )}
-              </button>
+          {registerByPassword && (
+            <div className="mimin:flex mimin:flex-col mimin:gap-1">
+              <label htmlFor="confirmPassword" className="mimin:text-sm mimin:font-medium">
+                Confirm Password <sup className="mimin:text-destructive">*</sup>
+              </label>
+              <div className="mimin:relative">
+                <input
+                  {...register("confirmPassword")}
+                  type={showConfirmPassword ? "text" : "password"}
+                  id="confirmPassword"
+                  autoComplete="new-password"
+                  placeholder="Confirm your password"
+                  className="mimin:border mimin:rounded-md mimin:p-2 mimin:w-full mimin:focus:outline mimin:focus:outline-1"
+                  style={{ borderColor: mainColor, outlineColor: mainColor }}
+                />
+                <button
+                  type="button"
+                  className="mimin:absolute mimin:right-2.5 mimin:top-1/2 mimin:-translate-y-1/2 mimin:text-gray-500 mimin:cursor-pointer"
+                  onClick={() => setShowConfirmPassword((e) => !e)}
+                >
+                  {showConfirmPassword ? (
+                    <EyeIcon className="mimin:w-4 mimin:h-4" />
+                  ) : (
+                    <EyeOffIcon className="mimin:w-4 mimin:h-4" />
+                  )}
+                </button>
+              </div>
+              {errors.confirmPassword && (
+                <p className="mimin:text-xs mimin:text-red-500">{errors.confirmPassword.message as string}</p>
+              )}
             </div>
-            {errors.confirmPassword && (
-              <p className="mimin-text-xs mimin-text-red-500">{errors.confirmPassword.message as string}</p>
-            )}
-          </div>
+          )}
 
-          <div className="mimin-flex mimin-items-start mimin-gap-3 mimin-py-2">
+          <div className="mimin:flex mimin:items-start mimin:gap-3 mimin:py-2">
             <input
               {...register("acceptTerms")}
               type="checkbox"
               id="acceptTerms"
-              className="mimin-mt-1 mimin-size-3.5"
+              className="mimin:mt-1 mimin:size-3.5"
               style={{ accentColor: mainColor }}
             />
-            <label className="mimin-block mimin-text-xs mimin-text-gray-500" htmlFor="acceptTerms">
+            <label className="mimin:block mimin:text-xs mimin:text-gray-500" htmlFor="acceptTerms">
               By creating an account, you agree to our{" "}
-              <a href="#" className="mimin-underline" style={{ color: mainColor }}>
+              <a href="#" className="mimin:underline" style={{ color: mainColor }}>
                 Terms of Service
               </a>
             </label>
           </div>
-          {errors.acceptTerms && <p className="mimin-text-xs mimin-text-red-500">{errors.acceptTerms.message as string}</p>}
+          {errors.acceptTerms && <p className="mimin:text-xs mimin:text-red-500">{errors.acceptTerms.message as string}</p>}
 
           {errorMessage && (
-            <div className="mimin-flex mimin-items-start mimin-gap-3 mimin-bg-[#F26075]/10 mimin-p-2 mimin-rounded-md mimin-mt-2 mimin-border mimin-border-[#F26075]/20">
-              <div className="mimin-flex mimin-items-start mimin-justify-center mimin-pt-1">
-                <TriangleAlert className="mimin-w-4 mimin-h-4 mimin-text-[#F26075]" />
+            <div className="mimin:flex mimin:items-start mimin:gap-3 mimin:bg-[#F26075]/10 mimin:p-2 mimin:rounded-md mimin:mt-2 mimin:border mimin:border-[#F26075]/20">
+              <div className="mimin:flex mimin:items-start mimin:justify-center mimin:pt-1">
+                <TriangleAlert className="mimin:w-4 mimin:h-4 mimin:text-[#F26075]" />
               </div>
-              <p className="mimin-text-[#F26075] mimin-text-sm">{errorMessage}</p>
+              <p className="mimin:text-[#F26075] mimin:text-sm">{errorMessage}</p>
             </div>
           )}
 
-          <div className="mimin-flex mimin-flex-col mimin-gap-1 mimin-pb-6 mimin-pt-2">
+          <div className="mimin:flex mimin:flex-col mimin:gap-1 mimin:pb-6 mimin:pt-2">
             <button
               type="submit"
-              className="mimin-text-white mimin-px-4 mimin-py-2 mimin-rounded-md mimin-w-full mimin-flex mimin-justify-center mimin-items-center mimin-gap-2 mimin-cursor-pointer mimin-disabled:opacity-50 mimin-disabled:cursor-not-allowed mimin-transition-opacity"
+              className="mimin:text-white mimin:px-4 mimin:py-2 mimin:rounded-md mimin:w-full mimin:flex mimin:justify-center mimin:items-center mimin:gap-2 mimin:cursor-pointer mimin:disabled:opacity-50 mimin:disabled:cursor-not-allowed mimin:transition-opacity"
               style={{ backgroundColor: mainColor }}
               disabled={loading}
             >
-              {loading && <LoaderCircle className="mimin-w-4 mimin-h-4 mimin-animate-spin" />}
+              {loading && <LoaderCircle className="mimin:w-4 mimin:h-4 mimin:animate-spin" />}
               {loading ? "Creating Account..." : "Create Account"}
             </button>
-            <div className="mimin-text-xs mimin-text-center mimin-text-gray-500 mimin-mt-2">
+            <div className="mimin:text-xs mimin:text-center mimin:text-gray-500 mimin:mt-2">
               Already have an account?{" "}
               <button
                 type="button"
                 onClick={onClickSignin}
-                className="mimin-inline mimin-underline mimin-cursor-pointer"
+                className="mimin:inline mimin:underline mimin:cursor-pointer"
                 style={{ color: mainColor }}
               >
                 Sign in
