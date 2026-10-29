@@ -101,26 +101,84 @@
       <div class="demo-section">
         <h2>💻 Cara Penggunaan</h2>
 
-        <h3>1. Import Component</h3>
+        <h3>1. Embed (disarankan)</h3>
+        <div class="code-block">
+          import { Chatbot } from '.../dist/chat-widget.js' Chatbot.init({
+          widgetType: "chatbot", credentials: { apiKey: "YOUR_API_KEY",
+          username: "YOUR_USERNAME", websiteId: "YOUR_WEBSITE_ID",
+          chatbotAgentId: "YOUR_CHATBOT_AGENT_ID", }, }); // theme + CSS dimuat
+          otomatis (remote dari api-credential)
+        </div>
+
+        <h3>2. Import Component (React langsung)</h3>
         <div class="code-block">
           import { ChatWidget } from './components/ChatWidget'; import type {
           ChatbotConfig } from './types';
         </div>
 
-        <h3>2. Setup Configuration</h3>
+        <h3>3. Setup Configuration</h3>
         <div class="code-block">
-          const config: ChatbotConfig = { theme: { button: { backgroundColor:
-          "#ffffff", textColor: "#0096a2", tooltip: "Ask Assistant" },
-          chatWindow: { backgroundColor: "#0096a2", title: "AI Assistant",
-          width: "350px", height: "600px" } } };
+          const config: ChatbotConfig = { widgetType: "chatbot", credentials: {
+          apiKey: "YOUR_API_KEY", username: "YOUR_USERNAME", websiteId:
+          "YOUR_WEBSITE_ID", chatbotAgentId: "YOUR_CHATBOT_AGENT_ID", }, theme: {
+          button: { backgroundColor: "#ffffff", textColor: "#0096a2", tooltip:
+          "Ask Assistant" }, chatWindow: { header: { title: "AI Assistant" },
+          width: "350px", height: "600px" } } } }; // theme di sini hanya relevan
+          untuk usage langsung; embed script menimpanya dengan theme remote
         </div>
 
-        <h3>3. Render Component</h3>
+        <h3>4. Render Component</h3>
         <div class="code-block">
-          function App() { const handleSendMessage = (message: string) => {
-          console.log('Message:', message); }; return ( &lt;div
-          className="App"&gt; &lt;ChatWidget config={config}
-          onSendMessage={handleSendMessage} /&gt; &lt;/div&gt; ); }
+          function App() { return ( &lt;div className="App"&gt; &lt;ChatWidget
+          config={config} signature="" /&gt; &lt;/div&gt; ); } // props: config,
+          signature (wajib), voiceName?, configErrors?
+        </div>
+      </div>
+
+      <div class="demo-section">
+        <h2>🧩 Widget Types</h2>
+        <p>
+          Embed hanya mengirim parameter minimal. <span class="highlight">Theme widget diambil remote</span>
+          meniru alur <code>chatbot-ui</code> dashboard:
+          <code>GET /v1/chatbot-agent/get/{username}/{agentId}</code> (hanya dari
+          <code>credentials.chatbotAgentId</code>/<code>voiceAgentId</code>) &rarr;
+          <code>api_credential_id</code> = <code>data_id[0]</code> pada
+          <code>channel</code> agent dengan <code>data_type: "website"</code>
+          (fallback: <code>data_id</code> / <code>_id</code> agent) &rarr;
+          <code>GET /v1/api-credential/get/{username}/{api_credential_id}</code> &rarr;
+          <code>template_data</code> jadi theme (fallback: <code>widget_setting</code> agent,
+          lalu <code>account/get-widget</code>) — tampilan widget selalu 1:1 dengan setting
+          api-credential di dashboard. CSS widget (<code>dist/chat-widget.css</code>)
+          disuntik otomatis oleh <code>Chatbot.init()</code>; tidak perlu tag
+          <code>&lt;link&gt;</code> manual.
+        </p>
+        <ul class="feature-list">
+          <li><strong>chatbot</strong> (default) &rarr; wajib <code>credentials.chatbotAgentId</code> + <code>credentials.websiteId</code> (penerima webhook). Chat memakai <code>/v1/website/webhook</code> + socket room <code>{websiteId}-{phone}</code>, 1:1 dengan chatbot-ui dashboard. Voice call jika credential men-set <code>widget_enable_voice_ai</code>.</li>
+          <li><strong>voice-ai</strong> &rarr; <code>credentials.voiceAgentId</code> (fallback: <code>widget_voice_ai_agent_id</code> credential). Hanya panggilan, tanpa chat input.</li>
+        </ul>
+
+        <h3>1. chatbot (default)</h3>
+        <div class="code-block">
+          Chatbot.init({ widgetType: "chatbot", credentials: { apiKey:
+          "YOUR_API_KEY", username: "YOUR_USERNAME", websiteId:
+          "YOUR_WEBSITE_ID", chatbotAgentId: "YOUR_CHATBOT_AGENT_ID", apiUrl:
+          "YOUR_API_URL", // opsional }, });
+        </div>
+
+        <h3>2. voice-ai (calls only)</h3>
+        <div class="code-block">
+          Chatbot.init({ widgetType: "voice-ai", credentials: { apiKey:
+          "YOUR_API_KEY", username: "YOUR_USERNAME", voiceAgentId:
+          "YOUR_VOICE_AGENT_ID", // boleh kosong jika credential punya
+          widget_voice_ai_agent_id }, });
+        </div>
+
+        <h3>3. Config rusak (contoh error card)</h3>
+        <div class="code-block">
+          Chatbot.init({ widgetType: "chatbot", credentials: { apiKey:
+          "YOUR_API_KEY", username: "YOUR_USERNAME", // chatbotAgentId sengaja
+          dikosongkan }, }); // Popup widget menampilkan kartu merah "Widget configuration error" //
+          dan console.error berisi field yang kurang.
         </div>
       </div>
 
@@ -162,12 +220,10 @@
       <div class="demo-section">
         <h2>🔖 Styling Unik dengan Prefix Tailwind CSS</h2>
         <p>
-          <b>Catatan:</b> Fitur prefix Tailwind CSS (misal: <code>mimin-</code>)
-          <b>belum digunakan pada versi ini</b>.<br />
-          Semua class Tailwind pada widget ini masih menggunakan class default
-          tanpa prefix.<br />
-          Fitur prefix akan tersedia pada versi berikutnya untuk menghindari
-          bentrok style dengan website client.
+          <b>Catatan:</b> Semua class Tailwind pada widget ini memakai prefix
+          <code>mimin-</code> (format prefix-first, mis.
+          <code>mimin:flex</code>, <code>mimin:hover:bg-red-500</code>) agar tidak
+          bentrok dengan style website client.
         </p>
       </div>
     </div>
@@ -176,65 +232,15 @@
       import { Chatbot } from 'https://unpkg.com/mimin-chatbot-widget-react@latest/dist/chat-widget.js'
 
       Chatbot.init({
-        widgetType: "website",
+        widgetType: "chatbot",
         credentials: {
           apiKey: "YOUR_API_KEY",
           username: "YOUR_USERNAME",
           websiteId: "YOUR_WEBSITE_ID",
+          chatbotAgentId: "YOUR_CHATBOT_AGENT_ID",
           apiUrl: "YOUR_API_URL",
         },
-        baseUrl: "YOUR_BASE_URL",
-        theme: {
-          button: {
-            backgroundColor: "#0093a3",
-            textColor: "#FFFFFF",
-            iconSrc: "https://appstaging.mimin.io/favicon.ico",
-            tooltip: "Ayooo",
-          },
-          chatWindow: {
-            isActiveCall: false,
-
-            enableMediaUpload: true,
-
-            loginByPhone: true,
-            loginByPassword: true,
-            registerByPhone: true,
-            registerByPassword: true,
-            header: {
-              backgroundColor: "#0093a3",
-              color: "#FFFFFF",
-              title: "Ayooo",
-              description: "Mimin Disini",
-              avatarSrc: "https://mimin-images.s3.ap-southeast-1.amazonaws.com/akuntestomnichat/api-credential/widget_avatar_chatbot-52378ff9-0c44-4836-9d39-a679517cec79.png",
-              closeColorButton: "#ffffff",
-              voiceAIColorButton: "#ffffff",
-              refreshColorButton: "#ffffff",
-            },
-            botMessage: {
-              backgroundColor: "#0093a3",
-              borderColor: "#ffffff",
-              textColor: "#ffffff",
-            },
-            userMessage: {
-              backgroundColor: "#0093a3",
-              borderColor: "#FFFFFF",
-              textColor: "#FFFFFF",
-            },
-            greating: {
-              title: "Hello Kamu! 👋",
-              description: "Mari mulai sesi percakapan kita!",
-              avatar: "https://mimin-images.s3.ap-southeast-1.amazonaws.com/akuntestomnichat/api-credential/widget_greeting_avatar-7a547c95-094f-43fe-b21a-9a34399f06c4.svg_xml",
-              color: "#0093a3",
-            },
-            textInput: {
-              placeholder: "Enter your message here...",
-              backgroundColor: "#0093a3",
-              sendButtonColor: "#0093a3",
-              footerText: "Powered by Mimin",
-              footerTextColor: "#ffffff",
-            }
-          },
-        },
+        // theme dimuat remote meniru alur chatbot-ui (api-credential/get/{username}/{api_credential_id}) — tidak perlu dikirim di sini
       });
     </script>
   </body>

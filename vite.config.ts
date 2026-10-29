@@ -2,9 +2,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 // import tailwindcss from '@tailwindcss/vite'
 
+import tailwindcss from '@tailwindcss/vite'
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
     "process.env": "{}", // Untuk mencegah error process.env lain
@@ -28,7 +30,7 @@ export default defineConfig({
 
         globals: {},
         // Bundle semua dependencies ke dalam satu file
-        inlineDynamicImports: true,
+        codeSplitting: false,
       },
     },
     // Menonaktifkan source maps agar kode sumber tidak terekspos

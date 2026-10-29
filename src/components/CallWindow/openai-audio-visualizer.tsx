@@ -121,16 +121,16 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
   return (
     <div
-      className="mimin-flex mimin-items-center mimin-justify-center"
+      className="mimin:flex mimin:items-center mimin:justify-center"
       style={{ width: size, height: size }}
     >
       {isAnalyzing ? (
         // Real-time audio visualizer
-        <div className="mimin-flex mimin-items-end mimin-justify-center mimin-space-x-1">
+        <div className="mimin:flex mimin:items-end mimin:justify-center mimin:space-x-1">
           {audioData.map((value, index) => (
             <motion.div
               key={index}
-              className="mimin-rounded-full mimin-bg-current"
+              className="mimin:rounded-full mimin:bg-current"
               style={{
                 width: Math.max(2, size / 16),
                 minHeight: Math.max(2, size / 16),
@@ -151,8 +151,8 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
         </div>
       ) : (
         // Fallback animation (seperti sebelumnya)
-        <div className="mimin-flex mimin-items-center mimin-justify-center mimin-animate-pulse">
-          <span className="mimin-text-white mimin-text-sm">Connecting...</span>
+        <div className="mimin:flex mimin:items-center mimin:justify-center mimin:animate-pulse">
+          <span className="mimin:text-white mimin:text-sm">Connecting...</span>
         </div>
       )}
     </div>

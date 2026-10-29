@@ -2,6 +2,10 @@ export interface ChatWindowConfig {
   isActiveCall?: boolean;
   enableLogin?: boolean;
   enableRegister?: boolean;
+  loginByPhone?: boolean;
+  loginByPassword?: boolean;
+  registerByPhone?: boolean;
+  registerByPassword?: boolean;
   enableGreating?: boolean;
   enableMediaUpload?: boolean;
   width?: string;
@@ -68,13 +72,19 @@ export interface Credentials {
   apiKey?: string;
   username?: string;
   websiteId?: string;
+  chatbotAgentId?: string;
+  voiceAgentId?: string;
   apiUrl?: string;
 }
 
 export interface ChatbotConfig {
-  widgetType?: "website" | "chatbot"
+  widgetType?: "chatbot" | "voice-ai";
   credentials?: Credentials;
   theme?: ThemeConfig;
+  data?: {
+    enable_voice?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 export interface PaginationData {
@@ -90,7 +100,6 @@ export interface AuthCookie {
 
 export interface Environment {
   NEXT_PUBLIC_CUSTOMER_API: string;
-  NEXT_PUBLIC_CHATBOT_URL: string;
   NEXT_PUBLIC_OPENAI_URL: string;
   NEXT_PUBLIC_API_SOCKET: string;
   NEXT_PUBLIC_API_SOCKET_PATHNAME: string;
@@ -127,6 +136,12 @@ export type IESResponse =
   | IESPayloadResponse
   | IESMetaDataResponse;
 
+export interface MediaItem {
+  type: string;
+  name: string;
+  data: string;
+}
+
 export interface Interaction {
   human?: Message;
   ai?: Message;
@@ -138,12 +153,19 @@ export interface Message {
   content: string;
   additional_kwargs: Record<string, unknown>;
   example: boolean;
-  media?: {
-    type: string;
-    name: string;
-    data: string;
-  }[];
+  media?: MediaItem[];
   isError?: boolean;
+  status?: "pending" | "sending" | "sent" | "failed";
+  _tempId?: string;
+  isUploading?: boolean;
+  context_id?: string;
+  context?: {
+    id: string;
+    direction: "incoming" | "outgoing";
+    text: string;
+    file: string;
+    file_name: string;
+  };
 }
 
 export interface Pagination {
@@ -181,7 +203,28 @@ export type ConversationsResponse = {
 };
 
 export type Agent = {
-  id: string;
+  id?: string;
+  _id?: string;
   name: string;
+  type?: string;
+  is_active?: boolean;
   template_data: { voice_ai_agent_id: string }
+}
+
+export type VoiceProvider = "openai" | "gemini";
+
+export interface RealtimeTool {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface RealtimeSession {
+  provider: VoiceProvider;
+  model?: string;
+  instructions?: string;
+  tools?: RealtimeTool[];
+  client_secret?: { value: string };
+  ephemeral_token?: string;
 }
